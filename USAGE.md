@@ -95,7 +95,7 @@ python src/run_baseline.py --qa data/test_qa.csv --out submission.csv \
 | `--seq-frames` | 16 | sequence 문항 전용 프레임 수 |
 | `--multi-mode` | `binary` | multi 문항 처리: `binary`=보기별 yes/no 분해(권장), `joint`=한 번에 질문 |
 | `--crop-person` | off | 배경 차분으로 사람 영역 crop — **v5 검증에서 전면 하락 (비권장, 기록용)** |
-| `--sampling` | `uniform` | `motion`=모션 에너지 기반 keyframe 선택. 원본에서 후보 4n장을 읽으므로 `--media-root data`와 함께 사용 권장 |
+| `--sampling` | `auto` | 카테고리별 자동 선택: object_interaction·emotion=motion(keyframe), 나머지=uniform. motion 카테고리는 비디오가 있는 루트를 자동 우선 사용 |
 | `--modality` | `IR` | 사용할 modality |
 | `--val-users` | (없음) | 예: `9,24` — 해당 user 문항만 추론 (검증용) |
 | `--limit` | 0 | 앞에서 N문항만 (디버그용) |
