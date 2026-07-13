@@ -22,7 +22,11 @@ class QwenVLM:
     @torch.inference_mode()
     def answer(self, frames, prompt: str) -> str:
         """frames: PIL.Image 리스트 (시간순), prompt: 질문+보기 텍스트."""
-        content = [{"type": "image", "image": img} for img in frames]
+        # 프레임마다 'Frame i:' 라벨을 끼워 넣어 시간축을 명시 (sequence/emotion에 중요)
+        content = []
+        for i, img in enumerate(frames, 1):
+            content.append({"type": "text", "text": f"Frame {i}:"})
+            content.append({"type": "image", "image": img})
         content.append({"type": "text", "text": prompt})
         messages = [
             {"role": "system", "content": SYSTEM_PROMPT},

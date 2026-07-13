@@ -34,6 +34,8 @@ def main():
     ap.add_argument("--out", default="submission.csv")
     ap.add_argument("--model", default=config.DEFAULT_MODEL)
     ap.add_argument("--frames", type=int, default=config.DEFAULT_NUM_FRAMES)
+    ap.add_argument("--seq-frames", type=int, default=16,
+                    help="sequence 문항 전용 프레임 수 (순서 판단에 더 많은 프레임 필요)")
     ap.add_argument("--colormap", action="store_true", help="depth를 JET 컬러맵으로 변환")
     ap.add_argument("--modality", default="IR",
                     help="IR / Depth_Color / Depth / Thermal (없으면 선호 순서로 fallback). "
@@ -86,8 +88,9 @@ def main():
                     media = data_utils.resolve_media(rel, media_roots)
                 except FileNotFoundError:
                     media = data_utils.resolve_media(row["path"], media_roots)
+                n_frames = args.seq_frames if category == "sequence" else args.frames
                 frames = data_utils.sample_frames(
-                    media, args.frames, args.colormap, modality=args.modality)
+                    media, n_frames, args.colormap, modality=args.modality)
                 prompt = build_prompt(str(row["question"]), options, category)
                 raw = model.answer(frames, prompt)
                 ans = parse_answer(raw, category, letters)
