@@ -52,11 +52,28 @@ SYSTEM_PROMPT = (
 )
 
 
-def build_prompt(question: str, options: dict, category: str) -> str:
+def build_prompt(question: str, options: dict, category: str,
+                 duration: float | None = None) -> str:
     opts_text = "\n".join(f"{k}. {v}" for k, v in options.items())
     instruction = CATEGORY_INSTRUCTIONS.get(category, CATEGORY_INSTRUCTIONS["single"])
+    dur_line = ""
+    if duration:
+        # 클립 길이는 행동 속도/태도 판단의 핵심 단서 (짧은 클립 = 서두른 동작)
+        dur_line = f"(The full clip is {duration:.1f} seconds long; frames span it evenly.)\n"
     return (
+        f"{dur_line}"
         f"Question: {question}\n\n"
         f"Options:\n{opts_text}\n\n"
         f"{instruction}"
+    )
+
+
+def build_binary_prompt(action: str, duration: float | None = None) -> str:
+    """multi 이진 분해용: 보기 하나가 영상에 등장하는지 yes/no로 묻는다."""
+    dur_line = f"(The full clip is {duration:.1f} seconds long.)\n" if duration else ""
+    return (
+        f"{dur_line}"
+        f'Question: Does the action "{action}" appear at ANY point in this video?\n'
+        "Check every frame carefully before deciding. "
+        "Reply with 'ANSWER: YES' or 'ANSWER: NO' only."
     )

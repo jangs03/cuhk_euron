@@ -90,6 +90,31 @@ def resolve_media(rel_path: str, media_roots) -> Path:
     raise FileNotFoundError(f"media not found: {rel_path} (roots={media_roots})")
 
 
+def get_duration(media_path: Path, modality: str = "IR") -> float | None:
+    """클립 길이(초). 원본 비디오 메타데이터에서 계산 (fps, frame count).
+    이미지 캐시 디렉토리처럼 비디오가 없으면 None."""
+    p = Path(media_path)
+    if p.is_dir():
+        pref = [modality] + [m for m in MODALITIES if m != modality]
+        for m in pref:
+            if (p / m).is_dir():
+                p = p / m
+                break
+        vids = sorted(v for v in p.rglob("*") if v.suffix.lower() in VIDEO_EXTS)
+        if not vids:
+            return None
+        p = vids[0]
+    if p.suffix.lower() not in VIDEO_EXTS:
+        return None
+    cap = cv2.VideoCapture(str(p))
+    fps = cap.get(cv2.CAP_PROP_FPS)
+    total = cap.get(cv2.CAP_PROP_FRAME_COUNT)
+    cap.release()
+    if fps > 0 and total > 0:
+        return float(total / fps)
+    return None
+
+
 def swap_modality(rel_path: str, modality: str) -> str:
     """test path처럼 '<Mod>/<Mod>.mp4'로 끝나는 경로를 원하는 modality로 교체.
     해당 패턴이 아니면 (클립 디렉토리 경로면) 그대로 반환."""

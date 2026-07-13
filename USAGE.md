@@ -93,6 +93,7 @@ python src/run_baseline.py --qa data/test_qa.csv --out submission.csv \
 | `--model` | `Qwen/Qwen2.5-VL-3B-Instruct` | VRAM 16GB↑면 `Qwen/Qwen2.5-VL-7B-Instruct` 권장 |
 | `--frames` | 8 | 클립당 입력 프레임 수 |
 | `--seq-frames` | 16 | sequence 문항 전용 프레임 수 |
+| `--multi-mode` | `binary` | multi 문항 처리: `binary`=보기별 yes/no 분해(권장), `joint`=한 번에 질문 |
 | `--modality` | `IR` | 사용할 modality |
 | `--val-users` | (없음) | 예: `9,24` — 해당 user 문항만 추론 (검증용) |
 | `--limit` | 0 | 앞에서 N문항만 (디버그용) |

@@ -20,12 +20,16 @@ class QwenVLM:
         self.processor = AutoProcessor.from_pretrained(model_name)
 
     @torch.inference_mode()
-    def answer(self, frames, prompt: str) -> str:
-        """frames: PIL.Image 리스트 (시간순), prompt: 질문+보기 텍스트."""
+    def answer(self, frames, prompt: str, times: list[float] | None = None) -> str:
+        """frames: PIL.Image 리스트 (시간순), prompt: 질문+보기 텍스트,
+        times: 프레임별 타임스탬프(초) — 있으면 라벨에 포함 (속도/순서 판단 단서)."""
         # 프레임마다 'Frame i:' 라벨을 끼워 넣어 시간축을 명시 (sequence/emotion에 중요)
         content = []
         for i, img in enumerate(frames, 1):
-            content.append({"type": "text", "text": f"Frame {i}:"})
+            label = f"Frame {i}:"
+            if times and i <= len(times):
+                label = f"Frame {i} (t={times[i - 1]:.1f}s):"
+            content.append({"type": "text", "text": label})
             content.append({"type": "image", "image": img})
         content.append({"type": "text", "text": prompt})
         messages = [

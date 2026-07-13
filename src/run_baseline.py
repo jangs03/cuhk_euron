@@ -22,8 +22,8 @@ from tqdm import tqdm
 
 import config
 import data_utils
-from parse_answer import parse_answer
-from prompts import build_prompt
+from parse_answer import parse_answer, parse_yes_no
+from prompts import build_binary_prompt, build_prompt
 
 
 def main():
@@ -36,6 +36,8 @@ def main():
     ap.add_argument("--frames", type=int, default=config.DEFAULT_NUM_FRAMES)
     ap.add_argument("--seq-frames", type=int, default=16,
                     help="sequence 문항 전용 프레임 수 (순서 판단에 더 많은 프레임 필요)")
+    ap.add_argument("--multi-mode", choices=["binary", "joint"], default="binary",
+                    help="multi 문항: binary=보기별 yes/no 분해(권장), joint=한 번에 질문")
     ap.add_argument("--colormap", action="store_true", help="depth를 JET 컬러맵으로 변환")
     ap.add_argument("--modality", default="IR",
                     help="IR / Depth_Color / Depth / Thermal (없으면 선호 순서로 fallback). "
@@ -91,9 +93,36 @@ def main():
                 n_frames = args.seq_frames if category == "sequence" else args.frames
                 frames = data_utils.sample_frames(
                     media, n_frames, args.colormap, modality=args.modality)
-                prompt = build_prompt(str(row["question"]), options, category)
-                raw = model.answer(frames, prompt)
-                ans = parse_answer(raw, category, letters)
+
+                # 클립 길이(초): 캐시(이미지 dir)에는 없으니 원본 루트에서 시도
+                duration = data_utils.get_duration(media, args.modality)
+                if duration is None:
+                    for root in media_roots:
+                        try:
+                            orig = data_utils.resolve_media(row["path"], root)
+                        except FileNotFoundError:
+                            continue
+                        duration = data_utils.get_duration(orig, args.modality)
+                        if duration:
+                            break
+                times = None
+                if duration and len(frames) > 1:
+                    times = [j * duration / (len(frames) - 1) for j in range(len(frames))]
+
+                if category == "multi" and args.multi_mode == "binary":
+                    # 보기별로 "영상에 등장하나?"를 따로 물어 yes인 것을 모은다
+                    yes = [L for L, opt in options.items()
+                           if parse_yes_no(model.answer(
+                               frames, build_binary_prompt(opt, duration), times))]
+                    if yes:
+                        ans = "".join(sorted(yes))
+                    else:  # 전부 no면 joint 질문으로 fallback
+                        prompt = build_prompt(str(row["question"]), options, category, duration)
+                        ans = parse_answer(model.answer(frames, prompt, times), category, letters)
+                else:
+                    prompt = build_prompt(str(row["question"]), options, category, duration)
+                    raw = model.answer(frames, prompt, times)
+                    ans = parse_answer(raw, category, letters)
             except Exception:
                 n_err += 1
                 traceback.print_exc()

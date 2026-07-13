@@ -4,6 +4,12 @@ import re
 SINGLE_CATEGORIES = {"single", "combination", "emotion", "object_interaction"}
 
 
+def parse_yes_no(raw: str) -> bool:
+    """이진 질의 응답 파싱. 마지막에 등장하는 YES/NO 토큰으로 판정 (불명확하면 NO)."""
+    tokens = re.findall(r"\b(YES|NO)\b", (raw or "").upper())
+    return bool(tokens) and tokens[-1] == "YES"
+
+
 def _extract_letter_run(raw: str, valid: str) -> str:
     """'ANSWER: ...' 뒤의 한 줄에서 유효 글자 추출 ('A, C' 같은 구분자 허용).
     ANSWER 패턴이 없으면 본문에서 마지막으로 등장하는 유효 글자 뭉치를 쓴다."""
