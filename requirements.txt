@@ -1,0 +1,9 @@
+pandas
+numpy
+opencv-python
+pillow
+tqdm
+torch
+transformers>=4.49
+accelerate
+qwen-vl-utils

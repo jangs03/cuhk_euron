@@ -1,0 +1,56 @@
+# ── 대회 데이터 (용량 大 + CUHK-X License — 재배포 금지) ──
+data/
+*.zip
+HAU/
+harn/
+HARn/
+large_model_track_test/
+Large-Model-Track*/
+
+# ── Claude Code 로컬 설정 ──
+.claude/
+
+# 미디어 파일이 실수로 다른 위치에 있어도 차단
+*.mp4
+*.avi
+*.mkv
+*.mov
+*.webm
+
+# ── 전처리 캐시 / 실험 산출물 ──
+cache/
+# csv는 전부 차단: QA csv(대회 데이터)와 제출/예측/인덱스 파일 커밋 방지
+*.csv
+
+# ── 모델 가중치 / HF 캐시 ──
+*.safetensors
+*.bin
+*.pt
+*.pth
+*.gguf
+*.onnx
+checkpoints/
+models/
+.cache/
+
+# ── Python ──
+__pycache__/
+*.py[cod]
+*.egg-info/
+.venv/
+venv/
+env/
+.ipynb_checkpoints/
+
+# ── 비밀정보 (API 키 등) ──
+.env
+.env.*
+*.key
+secrets*
+
+# ── OS / 에디터 ──
+.DS_Store
+Thumbs.db
+.idea/
+.vscode/
+*.swp
