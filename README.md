@@ -4,6 +4,7 @@ Kaggle CUHK-X competition (Large Model Track) 베이스라인.
 Depth 비디오에 대한 객관식 VQA를 **로컬 VLM(Qwen2.5-VL) zero-shot**으로 푸는 파이프라인입니다.
 
 > **팀원용 상세 설계 문서: [PIPELINE.md](PIPELINE.md)** (모듈별 설명, HARn 전처리, 검증 전략, 실험 로드맵)
+> **코드 사용법 설명서: [USAGE.md](USAGE.md)** (스크립트별 인자·예시·트러블슈팅)
 
 ## 1. 파이프라인 설계
 
