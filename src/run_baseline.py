@@ -94,20 +94,24 @@ def main():
                 frames = data_utils.sample_frames(
                     media, n_frames, args.colormap, modality=args.modality)
 
-                # 클립 길이(초): 캐시(이미지 dir)에는 없으니 원본 루트에서 시도
-                duration = data_utils.get_duration(media, args.modality)
-                if duration is None:
-                    for root in media_roots:
-                        try:
-                            orig = data_utils.resolve_media(row["path"], root)
-                        except FileNotFoundError:
-                            continue
-                        duration = data_utils.get_duration(orig, args.modality)
-                        if duration:
-                            break
-                times = None
-                if duration and len(frames) > 1:
-                    times = [j * duration / (len(frames) - 1) for j in range(len(frames))]
+                # 클립 길이/타임스탬프: 검증 결과 emotion(+5%p)·multi에만 도움이 되고
+                # single/sequence에는 노이즈였음 → 해당 카테고리에만 적용 (v4)
+                duration, times = None, None
+                if category in ("emotion", "multi"):
+                    # 캐시(이미지 dir)에는 길이 정보가 없으니 원본 루트에서 시도
+                    duration = data_utils.get_duration(media, args.modality)
+                    if duration is None:
+                        for root in media_roots:
+                            try:
+                                orig = data_utils.resolve_media(row["path"], root)
+                            except FileNotFoundError:
+                                continue
+                            duration = data_utils.get_duration(orig, args.modality)
+                            if duration:
+                                break
+                    if duration and len(frames) > 1:
+                        times = [j * duration / (len(frames) - 1)
+                                 for j in range(len(frames))]
 
                 if category == "multi" and args.multi_mode == "binary":
                     # 보기별로 "영상에 등장하나?"를 따로 물어 yes인 것을 모은다
