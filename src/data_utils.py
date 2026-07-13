@@ -90,6 +90,14 @@ def resolve_media(rel_path: str, media_roots) -> Path:
     raise FileNotFoundError(f"media not found: {rel_path} (roots={media_roots})")
 
 
+def has_video(media_path: Path) -> bool:
+    """비디오 파일이거나, 비디오를 포함한 디렉토리인지 (모션 샘플링 후보 판정용)."""
+    p = Path(media_path)
+    if p.is_file():
+        return p.suffix.lower() in VIDEO_EXTS
+    return p.is_dir() and any(v.suffix.lower() in VIDEO_EXTS for v in p.rglob("*"))
+
+
 def get_duration(media_path: Path, modality: str = "IR") -> float | None:
     """클립 길이(초). 원본 비디오 메타데이터에서 계산 (fps, frame count).
     이미지 캐시 디렉토리처럼 비디오가 없으면 None."""

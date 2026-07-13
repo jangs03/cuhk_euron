@@ -41,9 +41,10 @@ def main():
     ap.add_argument("--crop-person", action="store_true",
                     help="배경 차분으로 사람 활동 영역만 crop (고정 카메라 가정, "
                          "캐시 프레임에도 즉석 적용 가능) — v5 검증에서 성능 하락, 비권장")
-    ap.add_argument("--sampling", choices=["uniform", "motion"], default="uniform",
-                    help="motion=모션 에너지 기반 keyframe 샘플링 "
-                         "(원본 비디오에서 후보 4n장을 읽으므로 --media-root data 권장)")
+    ap.add_argument("--sampling", choices=["uniform", "motion", "auto"], default="auto",
+                    help="auto=카테고리별 자동 선택 (v6 검증 결과: object_interaction/emotion만 "
+                         "motion, 나머지 uniform). motion 카테고리는 비디오가 있는 루트를 "
+                         "자동으로 우선 사용")
     ap.add_argument("--colormap", action="store_true", help="depth를 JET 컬러맵으로 변환")
     ap.add_argument("--modality", default="IR",
                     help="IR / Depth_Color / Depth / Thermal (없으면 선호 순서로 fallback). "
@@ -89,17 +90,41 @@ def main():
             options = data_utils.get_options(row)
             letters = list(options.keys())
             try:
+                # 카테고리별 샘플링 전략 (v6 검증: motion은 obj_interaction +7.4%p,
+                # emotion +3.0%p / HAU single -11.1%p, multi -4.0%p)
+                sampling = args.sampling
+                if sampling == "auto":
+                    sampling = ("motion" if category in ("object_interaction", "emotion")
+                                else "uniform")
+
                 # test path는 modality 파일을 직접 가리킴 → 원하는 modality로 교체 시도,
                 # 해당 modality가 없는 클립이면 원본 경로로 fallback
                 rel = data_utils.swap_modality(row["path"], args.modality)
-                try:
-                    media = data_utils.resolve_media(rel, media_roots)
-                except FileNotFoundError:
-                    media = data_utils.resolve_media(row["path"], media_roots)
+                rel_candidates = [rel] if rel == str(row["path"]) else [rel, str(row["path"])]
+
+                media = None
+                if sampling == "motion":
+                    # 모션 샘플링은 후보 프레임이 많아야 함 → 비디오가 있는 루트 우선
+                    for rc in rel_candidates:
+                        for root in media_roots:
+                            try:
+                                cand = data_utils.resolve_media(rc, root)
+                            except FileNotFoundError:
+                                continue
+                            if data_utils.has_video(cand):
+                                media = cand
+                                break
+                        if media is not None:
+                            break
+                if media is None:
+                    try:
+                        media = data_utils.resolve_media(rel, media_roots)
+                    except FileNotFoundError:
+                        media = data_utils.resolve_media(row["path"], media_roots)
                 n_frames = args.seq_frames if category == "sequence" else args.frames
                 frames, pos = data_utils.sample_frames(
                     media, n_frames, args.colormap, modality=args.modality,
-                    crop_person=args.crop_person, sampling=args.sampling,
+                    crop_person=args.crop_person, sampling=sampling,
                     return_pos=True)
 
                 # 클립 길이/타임스탬프: 검증 결과 emotion(+5%p)·multi에만 도움이 되고
