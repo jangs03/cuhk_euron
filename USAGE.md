@@ -127,6 +127,10 @@ python src/evaluate.py --pred val_pred.csv --gold data/training_qa.csv
 3. Run all → 완료 후 Drive `cuhk/submission.csv`를 Kaggle에 제출
 4. VM이 리셋되면 다시 Run all (데이터 재다운로드), 코드만 바꿨으면 셀 2부터 재실행
 
+Drive(`cuhk/`)에 저장되는 것: `submission.csv`, `val_pred.csv`,
+**`cache.tar`(전처리 캐시 — 다음 세션에서 자동 복원되어 재전처리 생략)**, 클립 인덱스 csv 3개.
+`MODALITY`를 바꿔 재전처리하려면 Drive의 `cache.tar`와 인덱스 csv를 지우고 재실행할 것.
+
 ## 7. 실험 방법 (예시)
 
 ```bash
