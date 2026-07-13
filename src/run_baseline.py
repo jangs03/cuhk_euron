@@ -38,6 +38,9 @@ def main():
                     help="sequence 문항 전용 프레임 수 (순서 판단에 더 많은 프레임 필요)")
     ap.add_argument("--multi-mode", choices=["binary", "joint"], default="binary",
                     help="multi 문항: binary=보기별 yes/no 분해(권장), joint=한 번에 질문")
+    ap.add_argument("--crop-person", action="store_true",
+                    help="배경 차분으로 사람 활동 영역만 crop (고정 카메라 가정, "
+                         "캐시 프레임에도 즉석 적용 가능)")
     ap.add_argument("--colormap", action="store_true", help="depth를 JET 컬러맵으로 변환")
     ap.add_argument("--modality", default="IR",
                     help="IR / Depth_Color / Depth / Thermal (없으면 선호 순서로 fallback). "
@@ -92,7 +95,8 @@ def main():
                     media = data_utils.resolve_media(row["path"], media_roots)
                 n_frames = args.seq_frames if category == "sequence" else args.frames
                 frames = data_utils.sample_frames(
-                    media, n_frames, args.colormap, modality=args.modality)
+                    media, n_frames, args.colormap, modality=args.modality,
+                    crop_person=args.crop_person)
 
                 # 클립 길이/타임스탬프: 검증 결과 emotion(+5%p)·multi에만 도움이 되고
                 # single/sequence에는 노이즈였음 → 해당 카테고리에만 적용 (v4)

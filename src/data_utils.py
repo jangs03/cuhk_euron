@@ -174,13 +174,61 @@ def _read_dir_frames(dir_path: Path, n: int, modality: str = "Depth") -> list[np
     raise FileNotFoundError(f"no video/images inside: {dir_path}")
 
 
+def person_crop_frames(frames: list[np.ndarray], pad: float = 0.15,
+                       thresh: int = 25, min_area: float = 0.01) -> list[np.ndarray]:
+    """고정 카메라 가정의 사람 영역 crop.
+
+    프레임들의 중앙값을 배경으로 보고, 배경과 달라지는(=사람이 지나간) 픽셀의
+    합집합 bbox로 모든 프레임을 동일하게 crop한다 (프레임 간 구도 일관성 유지).
+    움직임 신호가 너무 작거나 화면 대부분이면 원본을 그대로 반환한다.
+    """
+    if len(frames) < 3:
+        return frames
+    grays = []
+    for f in frames:
+        g = cv2.cvtColor(f, cv2.COLOR_BGR2GRAY) if f.ndim == 3 else f
+        grays.append(g)
+    bg = np.median(np.stack(grays), axis=0).astype(grays[0].dtype)
+
+    # 2프레임 이상에서 움직임이 감지된 픽셀만 인정 (단발 노이즈 제거)
+    count = np.zeros(bg.shape, np.uint16)
+    for g in grays:
+        count += (cv2.absdiff(g, bg) > thresh).astype(np.uint16)
+    mask = ((count >= 2) * 255).astype(np.uint8)
+    mask = cv2.morphologyEx(mask, cv2.MORPH_OPEN, np.ones((3, 3), np.uint8))
+    mask = cv2.dilate(mask, np.ones((7, 7), np.uint8), iterations=2)
+
+    # 유의미한 크기의 움직임 덩어리들의 합집합 bbox
+    contours, _ = cv2.findContours(mask, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
+    h, w = bg.shape[:2]
+    boxes = [cv2.boundingRect(c) for c in contours
+             if cv2.contourArea(c) > 0.003 * w * h]
+    if not boxes:
+        return frames
+    x0 = min(b[0] for b in boxes)
+    y0 = min(b[1] for b in boxes)
+    x1 = max(b[0] + b[2] for b in boxes)
+    y1 = max(b[1] + b[3] for b in boxes)
+
+    area = (x1 - x0) * (y1 - y0)
+    if area < min_area * w * h or area > 0.9 * w * h:
+        return frames  # 신호가 너무 작거나 crop 이득이 없음
+    px, py = int((x1 - x0) * pad), int((y1 - y0) * pad)
+    x0, y0 = max(0, x0 - px), max(0, y0 - py)
+    x1, y1 = min(w, x1 + px), min(h, y1 + py)
+    return [f[y0:y1, x0:x1] for f in frames]
+
+
 def sample_frames(media_path: Path, n: int, colormap: bool = False,
-                  max_side: int = 448, modality: str = "Depth") -> list[Image.Image]:
+                  max_side: int = 448, modality: str = "IR",
+                  crop_person: bool = False) -> list[Image.Image]:
     """미디어(파일 or 클립 디렉토리)에서 n프레임 균등 샘플링 → PIL 리스트."""
     if media_path.is_dir():
         raw = _read_dir_frames(media_path, n, modality)
     else:
         raw = _read_video_frames(media_path, n)
+    if crop_person:
+        raw = person_crop_frames([f for f in raw if f is not None])
 
     frames = []
     for f in raw:

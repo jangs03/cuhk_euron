@@ -94,6 +94,7 @@ python src/run_baseline.py --qa data/test_qa.csv --out submission.csv \
 | `--frames` | 8 | 클립당 입력 프레임 수 |
 | `--seq-frames` | 16 | sequence 문항 전용 프레임 수 |
 | `--multi-mode` | `binary` | multi 문항 처리: `binary`=보기별 yes/no 분해(권장), `joint`=한 번에 질문 |
+| `--crop-person` | off | 배경 차분으로 사람 활동 영역만 crop (고정 카메라 가정). 캐시 재생성 불필요 — 캐시 프레임에 즉석 적용됨 |
 | `--modality` | `IR` | 사용할 modality |
 | `--val-users` | (없음) | 예: `9,24` — 해당 user 문항만 추론 (검증용) |
 | `--limit` | 0 | 앞에서 N문항만 (디버그용) |
