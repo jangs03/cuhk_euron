@@ -67,7 +67,8 @@ def main():
     with open(out_path, "a", newline="", encoding="utf-8") as f:
         writer = csv.writer(f)
         if write_header:
-            writer.writerow(["qa_id", "answer"])
+            # Kaggle 채점기는 'prediction' 컬럼명을 요구함 (설명 페이지의 'answer' 예시는 오류)
+            writer.writerow(["qa_id", "prediction"])
 
         n_err = 0
         for _, row in tqdm(df.iterrows(), total=len(df)):

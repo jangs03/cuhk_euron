@@ -36,7 +36,7 @@ def main():
     args = ap.parse_args()
 
     df = data_utils.load_qa(args.qa)
-    rows = ["qa_id,answer"]
+    rows = ["qa_id,prediction"]
     for _, row in df.iterrows():
         letters = list(data_utils.get_options(row).keys())
         rows.append(f"{row['qa_id']},{random_answer(str(row['category']).strip(), letters)}")

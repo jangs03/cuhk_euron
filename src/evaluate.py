@@ -37,17 +37,18 @@ def main():
     args = ap.parse_args()
 
     pred = pd.read_csv(args.pred, dtype=str)
+    pred_col = "prediction" if "prediction" in pred.columns else "answer"
+    pred = pred.rename(columns={pred_col: "pred"})[["qa_id", "pred"]]
     gold = pd.read_csv(args.gold, dtype=str, keep_default_na=False)
     merged = pred.merge(
-        gold[["qa_id", "source", "category", "answer"]],
-        on="qa_id", suffixes=("_pred", "_gold"),
+        gold[["qa_id", "source", "category", "answer"]], on="qa_id",
     )
     if merged.empty:
         raise SystemExit("no overlapping qa_id between pred and gold")
 
     merged["correct"] = [
         is_correct(p, g, c)
-        for p, g, c in zip(merged["answer_pred"], merged["answer_gold"], merged["category"])
+        for p, g, c in zip(merged["pred"], merged["answer"], merged["category"])
     ]
 
     print(f"overall accuracy: {merged['correct'].mean():.4f}  (n={len(merged)})\n")

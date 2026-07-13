@@ -88,7 +88,7 @@ python src/run_baseline.py --qa data/test_qa.csv --out submission.csv \
 | 인자 | 기본값 | 설명 |
 |---|---|---|
 | `--qa` | `data/test_qa.csv` | 질문 csv |
-| `--out` | `submission.csv` | 출력 (qa_id,answer) |
+| `--out` | `submission.csv` | 출력 (qa_id,prediction) |
 | `--media-root` | `data` | 쉼표로 여러 개, **앞이 우선** (`data/cache,data` = 캐시 우선) |
 | `--model` | `Qwen/Qwen2.5-VL-3B-Instruct` | VRAM 16GB↑면 `Qwen/Qwen2.5-VL-7B-Instruct` 권장 |
 | `--frames` | 8 | 클립당 입력 프레임 수 |

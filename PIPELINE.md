@@ -12,7 +12,7 @@
 | Task | privacy-preserving(depth, RGB 없음) 홈 액티비티 비디오에 대한 **객관식 VQA** |
 | 벤치마크 | **HAU** (action understanding) + **HARn** (action reasoning) |
 | 평가 | 전체 정확도 (문항별 동일 가중치, **부분점수 없음**) |
-| 제출 | `qa_id,answer` 형식 csv |
+| 제출 | `qa_id,prediction` 형식 csv |
 | 규정 | 모델/API 제한 없음. 테스트 라벨 학습 금지, 테스트 수동 라벨링 금지 |
 | Split | **cross-subject** — train: user 1–9, 16–24 / test: user 10, 11, 25, 26 |
 
@@ -115,7 +115,7 @@ Testing/
                         ▼
  ┌──────────────────────────────────────────────────────────────┐
  │ (6) Output  ·  src/run_baseline.py                            │
- │   submission.csv (qa_id,answer) · 행 단위 flush → resume 지원    │
+ │   submission.csv (qa_id,prediction) · 행 단위 flush → resume 지원    │
  └──────────────────────────────────────────────────────────────┘
 ```
 
