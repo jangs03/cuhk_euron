@@ -40,7 +40,10 @@ def main():
                     help="multi 문항: binary=보기별 yes/no 분해(권장), joint=한 번에 질문")
     ap.add_argument("--crop-person", action="store_true",
                     help="배경 차분으로 사람 활동 영역만 crop (고정 카메라 가정, "
-                         "캐시 프레임에도 즉석 적용 가능)")
+                         "캐시 프레임에도 즉석 적용 가능) — v5 검증에서 성능 하락, 비권장")
+    ap.add_argument("--sampling", choices=["uniform", "motion"], default="uniform",
+                    help="motion=모션 에너지 기반 keyframe 샘플링 "
+                         "(원본 비디오에서 후보 4n장을 읽으므로 --media-root data 권장)")
     ap.add_argument("--colormap", action="store_true", help="depth를 JET 컬러맵으로 변환")
     ap.add_argument("--modality", default="IR",
                     help="IR / Depth_Color / Depth / Thermal (없으면 선호 순서로 fallback). "
@@ -94,9 +97,10 @@ def main():
                 except FileNotFoundError:
                     media = data_utils.resolve_media(row["path"], media_roots)
                 n_frames = args.seq_frames if category == "sequence" else args.frames
-                frames = data_utils.sample_frames(
+                frames, pos = data_utils.sample_frames(
                     media, n_frames, args.colormap, modality=args.modality,
-                    crop_person=args.crop_person)
+                    crop_person=args.crop_person, sampling=args.sampling,
+                    return_pos=True)
 
                 # 클립 길이/타임스탬프: 검증 결과 emotion(+5%p)·multi에만 도움이 되고
                 # single/sequence에는 노이즈였음 → 해당 카테고리에만 적용 (v4)
@@ -114,8 +118,8 @@ def main():
                             if duration:
                                 break
                     if duration and len(frames) > 1:
-                        times = [j * duration / (len(frames) - 1)
-                                 for j in range(len(frames))]
+                        # 실제 샘플 위치 기반 타임스탬프 (motion 샘플링은 비균등)
+                        times = [p * duration for p in pos]
 
                 if category == "multi" and args.multi_mode == "binary":
                     # 보기별로 "영상에 등장하나?"를 따로 물어 yes인 것을 모은다

@@ -131,16 +131,18 @@ def _uniform_indices(total: int, n: int) -> list[int]:
     return sorted({int(round(i)) for i in np.linspace(0, total - 1, n)})
 
 
-def _read_video_frames(video_path: Path, n: int) -> list[np.ndarray]:
+def _read_video_frames(video_path: Path, n: int) -> tuple[list[np.ndarray], list[float]]:
+    """비디오에서 n프레임 균등 샘플링. (frames, 상대 위치 0~1 리스트) 반환."""
     cap = cv2.VideoCapture(str(video_path))
     total = int(cap.get(cv2.CAP_PROP_FRAME_COUNT))
-    frames = []
+    frames, pos = [], []
     if total > 0:
         for idx in _uniform_indices(total, n):
             cap.set(cv2.CAP_PROP_POS_FRAMES, idx)
             ok, frame = cap.read()
             if ok:
                 frames.append(frame)
+                pos.append(idx / max(total - 1, 1))
     else:  # 프레임 수 메타데이터가 없으면 전부 읽고 샘플링
         buf = []
         while True:
@@ -148,14 +150,17 @@ def _read_video_frames(video_path: Path, n: int) -> list[np.ndarray]:
             if not ok:
                 break
             buf.append(frame)
-        frames = [buf[i] for i in _uniform_indices(len(buf), n)]
+        idxs = _uniform_indices(len(buf), n)
+        frames = [buf[i] for i in idxs]
+        pos = [i / max(len(buf) - 1, 1) for i in idxs]
     cap.release()
-    return frames
+    return frames, pos
 
 
-def _read_dir_frames(dir_path: Path, n: int, modality: str = "Depth") -> list[np.ndarray]:
+def _read_dir_frames(dir_path: Path, n: int,
+                     modality: str = "IR") -> tuple[list[np.ndarray], list[float]]:
     """클립 디렉토리인 경우: modality 하위 폴더를 선호 순서대로 선택한 뒤
-    그 안의 비디오 또는 이미지 시퀀스를 읽는다.
+    그 안의 비디오 또는 이미지 시퀀스를 읽는다. (frames, 상대 위치) 반환.
     (training path = 클립 디렉토리, 내부는 <modality>/<modality>.mp4 구조)"""
     pref = [modality] + [m for m in MODALITIES if m != modality]
     for m in pref:
@@ -169,9 +174,35 @@ def _read_dir_frames(dir_path: Path, n: int, modality: str = "Depth") -> list[np
         return _read_video_frames(videos[0], n)
     images = sorted(p for p in dir_path.rglob("*") if p.suffix.lower() in IMAGE_EXTS)
     if images:
-        picked = [images[i] for i in _uniform_indices(len(images), n)]
-        return [cv2.imread(str(p)) for p in picked]
+        idxs = _uniform_indices(len(images), n)
+        frames = [cv2.imread(str(images[i])) for i in idxs]
+        pos = [i / max(len(images) - 1, 1) for i in idxs]
+        return frames, pos
     raise FileNotFoundError(f"no video/images inside: {dir_path}")
+
+
+def _pick_motion_indices(frames: list[np.ndarray], n: int) -> list[int]:
+    """모션 에너지 누적분포를 n등분해 keyframe 인덱스 선택 (시간순 유지).
+
+    행동이 벌어지는 구간에서 촘촘히, 정지 구간에서 성기게 뽑는다.
+    균등 샘플링이 짧게 등장하는 행동을 놓치는 문제(multi/sequence) 대응."""
+    if len(frames) <= n:
+        return list(range(len(frames)))
+    small = []
+    for f in frames:
+        g = cv2.cvtColor(f, cv2.COLOR_BGR2GRAY) if f.ndim == 3 else f
+        small.append(cv2.resize(g, (80, 60)))
+    energy = [1e-6]  # 첫 프레임 몫
+    for a, b in zip(small, small[1:]):
+        energy.append(float(cv2.absdiff(a, b).mean()) + 1e-6)
+    cum = np.cumsum(energy)
+    targets = np.linspace(cum[0], cum[-1], n)
+    idx = sorted({int(np.searchsorted(cum, t, side="left")) for t in targets})
+    # 중복 제거로 모자라면 아직 안 뽑힌 인덱스로 채움
+    pool = [i for i in range(len(frames)) if i not in idx]
+    while len(idx) < n and pool:
+        idx.append(pool.pop(0))
+    return sorted(idx)[:n]
 
 
 def person_crop_frames(frames: list[np.ndarray], pad: float = 0.15,
@@ -221,14 +252,31 @@ def person_crop_frames(frames: list[np.ndarray], pad: float = 0.15,
 
 def sample_frames(media_path: Path, n: int, colormap: bool = False,
                   max_side: int = 448, modality: str = "IR",
-                  crop_person: bool = False) -> list[Image.Image]:
-    """미디어(파일 or 클립 디렉토리)에서 n프레임 균등 샘플링 → PIL 리스트."""
+                  crop_person: bool = False, sampling: str = "uniform",
+                  return_pos: bool = False):
+    """미디어(파일 or 클립 디렉토리)에서 n프레임 샘플링 → PIL 리스트.
+
+    sampling='uniform'  : 균등 간격 (기본)
+    sampling='motion'   : 후보를 넉넉히(4n, 최소 32장) 읽은 뒤 모션 에너지 기준 keyframe 선택
+    return_pos=True     : (frames, 상대 위치 0~1 리스트) 튜플 반환 — 타임스탬프 계산용
+    """
+    n_read = n if sampling == "uniform" else max(4 * n, 32)
     if media_path.is_dir():
-        raw = _read_dir_frames(media_path, n, modality)
+        raw, pos = _read_dir_frames(media_path, n_read, modality)
     else:
-        raw = _read_video_frames(media_path, n)
+        raw, pos = _read_video_frames(media_path, n_read)
+
+    valid = [(f, p) for f, p in zip(raw, pos) if f is not None]
+    raw = [f for f, _ in valid]
+    pos = [p for _, p in valid]
+
+    if sampling == "motion" and len(raw) > n:
+        sel = _pick_motion_indices(raw, n)
+        raw = [raw[i] for i in sel]
+        pos = [pos[i] for i in sel]
+
     if crop_person:
-        raw = person_crop_frames([f for f in raw if f is not None])
+        raw = person_crop_frames(raw)
 
     frames = []
     for f in raw:
@@ -245,4 +293,6 @@ def sample_frames(media_path: Path, n: int, colormap: bool = False,
         frames.append(Image.fromarray(f))
     if not frames:
         raise RuntimeError(f"no frames decoded from {media_path}")
+    if return_pos:
+        return frames, pos[:len(frames)]
     return frames
