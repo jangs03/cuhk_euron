@@ -46,6 +46,9 @@ def main():
     ap.add_argument("--yes-threshold", type=float, default=0.5,
                     help="decoding=logits에서 multi의 P(YES) 채택 기준. "
                          "tune_yes_threshold.py로 검증셋에서 튜닝 가능")
+    ap.add_argument("--quant", choices=["none", "4bit", "8bit"], default="none",
+                    help="bitsandbytes 양자화 (VRAM 절감용, T4 등 저사양 GPU). "
+                         "속도가 목적이면 --model ...-AWQ 체크포인트 권장")
     ap.add_argument("--crop-person", action="store_true",
                     help="배경 차분으로 사람 활동 영역만 crop (고정 카메라 가정, "
                          "캐시 프레임에도 즉석 적용 가능) — v5 검증에서 성능 하락, 비권장")
@@ -80,7 +83,8 @@ def main():
         print(f"resume: {len(done)} already answered")
 
     from vlm import load_model
-    model = load_model(args.model)
+    model = load_model(args.model,
+                       quant=None if args.quant == "none" else args.quant)
 
     write_header = not out_path.exists()
     # logits 디코딩 시 확률 사이드카: threshold 재튜닝/앙상블에 재사용 (재추론 불필요)

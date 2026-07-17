@@ -98,6 +98,17 @@ python src/run_baseline.py --qa data/test_qa.csv --out submission.csv \
 | `--sampling` | `auto` | 카테고리별 자동 선택: object_interaction·emotion=motion(keyframe), 나머지=uniform. motion 카테고리는 비디오가 있는 루트를 자동 우선 사용 |
 | `--decoding` | `generate` | `logits`=자유 생성 대신 로그확률로 답 선택 (single류=글자 확률 비교, multi=P(YES)+threshold, sequence는 항상 generate). 보기별 확률이 `<out>.probs.csv`에 저장됨 |
 | `--yes-threshold` | 0.5 | logits 디코딩에서 multi의 P(YES) 채택 기준 |
+| `--quant` | `none` | `4bit`/`8bit` = bitsandbytes 양자화 (VRAM 절감용). 속도 목적이면 아래 AWQ 권장 |
+
+**속도 최적화 가이드** (효과 순, 조합 가능):
+
+| 기법 | 방법 | 효과 | 비고 |
+|---|---|---|---|
+| 로짓 디코딩 | `--decoding logits` | single류 생성 64토큰 → forward 1회 | 정확도 개선 겸용 |
+| **AWQ 4-bit** | `--model Qwen/Qwen2.5-VL-7B-Instruct-AWQ` + `pip install autoawq` | 디코딩 ~1.5-2×, VRAM ~1/3 (T4에서도 7B 가능) | **정확도 검증 필수** (보통 -1%p 이내) |
+| FlashAttention-2 | `pip install flash-attn --no-build-isolation` (설치돼 있으면 자동 사용) | 긴 비전 시퀀스에서 attention 가속 | Colab 빌드 오래 걸릴 수 있음, 없으면 SDPA 자동 |
+| bnb 4bit | `--quant 4bit` | VRAM ~1/4 (속도는 비슷하거나 소폭 감소) | T4/L4에서 큰 모델 올릴 때 |
+| 프레임/해상도 축소 | `--frames 6`, max_side 축소 | 비전 토큰 수 비례 가속 | 정확도 트레이드오프 — 검증 필수 |
 
 **threshold 튜닝** (`tune_yes_threshold.py`) — 재추론 없이 사이드카 확률만으로:
 

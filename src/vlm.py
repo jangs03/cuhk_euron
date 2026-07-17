@@ -9,16 +9,48 @@ import config
 from prompts import SYSTEM_PROMPT
 
 
+def _attn_implementation() -> str:
+    """flash-attn이 설치돼 있으면 FlashAttention-2, 아니면 PyTorch SDPA.
+    비전 토큰이 긴 입력(프레임 8~16장)에서 FA2가 유의미하게 빠르다."""
+    import importlib.util
+    if torch.cuda.is_available() and importlib.util.find_spec("flash_attn"):
+        return "flash_attention_2"
+    return "sdpa"
+
+
 class QwenVLM:
-    def __init__(self, model_name: str = config.DEFAULT_MODEL):
+    def __init__(self, model_name: str = config.DEFAULT_MODEL,
+                 quant: str | None = None):
+        """quant: None(bf16) / '4bit' / '8bit' (bitsandbytes 온더플라이 양자화).
+
+        속도가 목적이면 quant보다 AWQ 체크포인트를 권장:
+          --model Qwen/Qwen2.5-VL-7B-Instruct-AWQ  (+ pip install autoawq)
+        AWQ는 융합 커널이라 빠르고 VRAM ~1/3, bnb 4bit는 VRAM 절감용(속도는 비슷하거나 느림).
+        """
         from transformers import AutoProcessor, Qwen2_5_VLForConditionalGeneration
 
-        self.model = Qwen2_5_VLForConditionalGeneration.from_pretrained(
-            model_name,
+        kwargs = dict(
             torch_dtype=torch.bfloat16 if torch.cuda.is_available() else torch.float32,
             device_map="auto",
+            attn_implementation=_attn_implementation(),
         )
+        if quant in ("4bit", "8bit"):
+            from transformers import BitsAndBytesConfig
+            if quant == "4bit":
+                kwargs["quantization_config"] = BitsAndBytesConfig(
+                    load_in_4bit=True,
+                    bnb_4bit_quant_type="nf4",
+                    bnb_4bit_compute_dtype=torch.bfloat16,
+                    bnb_4bit_use_double_quant=True,
+                )
+            else:
+                kwargs["quantization_config"] = BitsAndBytesConfig(load_in_8bit=True)
+
+        self.model = Qwen2_5_VLForConditionalGeneration.from_pretrained(
+            model_name, **kwargs)
         self.processor = AutoProcessor.from_pretrained(model_name)
+        print(f"[vlm] {model_name} | attn={kwargs['attn_implementation']}"
+              f" | quant={quant or ('awq' if 'awq' in model_name.lower() else 'bf16')}")
 
     def _build_inputs(self, frames, prompt: str, times: list[float] | None = None,
                       assistant_prefix: str = ""):
@@ -91,5 +123,5 @@ class QwenVLM:
         return float(torch.softmax(pair, dim=0)[0])
 
 
-def load_model(name: str):
-    return QwenVLM(name)
+def load_model(name: str, quant: str | None = None):
+    return QwenVLM(name, quant=quant)
