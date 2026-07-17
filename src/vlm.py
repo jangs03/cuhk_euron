@@ -29,8 +29,14 @@ class QwenVLM:
         """
         from transformers import AutoProcessor, Qwen2_5_VLForConditionalGeneration
 
+        # T4(Turing)는 bf16 미지원 → fp16으로 자동 하향. Ampere+(A100/L4)는 bf16.
+        if torch.cuda.is_available():
+            dtype = torch.bfloat16 if torch.cuda.is_bf16_supported() else torch.float16
+        else:
+            dtype = torch.float32
+
         kwargs = dict(
-            torch_dtype=torch.bfloat16 if torch.cuda.is_available() else torch.float32,
+            torch_dtype=dtype,
             device_map="auto",
             attn_implementation=_attn_implementation(),
         )
@@ -40,7 +46,7 @@ class QwenVLM:
                 kwargs["quantization_config"] = BitsAndBytesConfig(
                     load_in_4bit=True,
                     bnb_4bit_quant_type="nf4",
-                    bnb_4bit_compute_dtype=torch.bfloat16,
+                    bnb_4bit_compute_dtype=dtype,
                     bnb_4bit_use_double_quant=True,
                 )
             else:
