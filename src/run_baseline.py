@@ -11,6 +11,7 @@
 """
 import argparse
 import csv
+import math
 import sys
 import traceback
 from pathlib import Path
@@ -38,6 +39,13 @@ def main():
                     help="sequence 문항 전용 프레임 수 (순서 판단에 더 많은 프레임 필요)")
     ap.add_argument("--multi-mode", choices=["binary", "joint"], default="binary",
                     help="multi 문항: binary=보기별 yes/no 분해(권장), joint=한 번에 질문")
+    ap.add_argument("--decoding", choices=["generate", "logits"], default="generate",
+                    help="logits=자유 생성 대신 보기 글자/YES 토큰의 로그확률로 답 선택. "
+                         "single류는 글자 확률 비교, multi(binary)는 P(YES)+threshold. "
+                         "sequence는 항상 generate. 확률은 <out>.probs.csv에 저장됨")
+    ap.add_argument("--yes-threshold", type=float, default=0.5,
+                    help="decoding=logits에서 multi의 P(YES) 채택 기준. "
+                         "tune_yes_threshold.py로 검증셋에서 튜닝 가능")
     ap.add_argument("--crop-person", action="store_true",
                     help="배경 차분으로 사람 활동 영역만 crop (고정 카메라 가정, "
                          "캐시 프레임에도 즉석 적용 가능) — v5 검증에서 성능 하락, 비권장")
@@ -75,6 +83,16 @@ def main():
     model = load_model(args.model)
 
     write_header = not out_path.exists()
+    # logits 디코딩 시 확률 사이드카: threshold 재튜닝/앙상블에 재사용 (재추론 불필요)
+    probs_path = out_path.with_suffix(out_path.suffix + ".probs.csv")
+    probs_f = probs_writer = None
+    if args.decoding == "logits":
+        probs_header = not probs_path.exists()
+        probs_f = open(probs_path, "a", newline="", encoding="utf-8")
+        probs_writer = csv.writer(probs_f)
+        if probs_header:
+            probs_writer.writerow(["qa_id", "category", "letter", "prob"])
+
     with open(out_path, "a", newline="", encoding="utf-8") as f:
         writer = csv.writer(f)
         if write_header:
@@ -146,16 +164,45 @@ def main():
                         # 실제 샘플 위치 기반 타임스탬프 (motion 샘플링은 비균등)
                         times = [p * duration for p in pos]
 
+                use_logits = args.decoding == "logits" and category != "sequence"
+
                 if category == "multi" and args.multi_mode == "binary":
-                    # 보기별로 "영상에 등장하나?"를 따로 물어 yes인 것을 모은다
-                    yes = [L for L, opt in options.items()
-                           if parse_yes_no(model.answer(
-                               frames, build_binary_prompt(opt, duration), times))]
-                    if yes:
-                        ans = "".join(sorted(yes))
-                    else:  # 전부 no면 joint 질문으로 fallback
-                        prompt = build_prompt(str(row["question"]), options, category, duration)
-                        ans = parse_answer(model.answer(frames, prompt, times), category, letters)
+                    if use_logits:
+                        # 보기별 P(YES)를 뽑아 threshold로 채택 (하드 YES/NO보다 조절 가능)
+                        probs = {L: model.yes_probability(
+                                     frames, build_binary_prompt(opt, duration), times)
+                                 for L, opt in options.items()}
+                        for L, p in probs.items():
+                            probs_writer.writerow([qa_id, category, L, f"{p:.4f}"])
+                        probs_f.flush()
+                        yes = sorted(L for L, p in probs.items()
+                                     if p >= args.yes_threshold)
+                        if not yes:  # 최소 1개: 가장 확률 높은 보기
+                            yes = [max(probs, key=probs.get)]
+                        ans = "".join(yes)
+                    else:
+                        # 보기별로 "영상에 등장하나?"를 따로 물어 yes인 것을 모은다
+                        yes = [L for L, opt in options.items()
+                               if parse_yes_no(model.answer(
+                                   frames, build_binary_prompt(opt, duration), times))]
+                        if yes:
+                            ans = "".join(sorted(yes))
+                        else:  # 전부 no면 joint 질문으로 fallback
+                            prompt = build_prompt(str(row["question"]), options,
+                                                  category, duration)
+                            ans = parse_answer(model.answer(frames, prompt, times),
+                                               category, letters)
+                elif use_logits:
+                    # single류: 보기 글자 토큰의 로그확률 직접 비교 (생성/파싱 노이즈 제거)
+                    prompt = build_prompt(str(row["question"]), options, category, duration)
+                    lp = model.option_logprobs(frames, prompt, letters, times)
+                    z = max(lp.values())
+                    total = sum(math.exp(v - z) for v in lp.values())
+                    for L in letters:
+                        probs_writer.writerow(
+                            [qa_id, category, L, f"{math.exp(lp[L] - z) / total:.4f}"])
+                    probs_f.flush()
+                    ans = max(lp, key=lp.get)
                 else:
                     prompt = build_prompt(str(row["question"]), options, category, duration)
                     raw = model.answer(frames, prompt, times)
@@ -167,6 +214,9 @@ def main():
             writer.writerow([qa_id, ans])
             f.flush()
 
+    if probs_f is not None:
+        probs_f.close()
+        print(f"probs → {probs_path}  (threshold 재튜닝: src/tune_yes_threshold.py)")
     print(f"done → {out_path}  (errors/fallbacks: {n_err})")
 
 

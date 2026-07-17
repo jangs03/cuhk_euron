@@ -96,6 +96,17 @@ python src/run_baseline.py --qa data/test_qa.csv --out submission.csv \
 | `--multi-mode` | `binary` | multi 문항 처리: `binary`=보기별 yes/no 분해(권장), `joint`=한 번에 질문 |
 | `--crop-person` | off | 배경 차분으로 사람 영역 crop — **v5 검증에서 전면 하락 (비권장, 기록용)** |
 | `--sampling` | `auto` | 카테고리별 자동 선택: object_interaction·emotion=motion(keyframe), 나머지=uniform. motion 카테고리는 비디오가 있는 루트를 자동 우선 사용 |
+| `--decoding` | `generate` | `logits`=자유 생성 대신 로그확률로 답 선택 (single류=글자 확률 비교, multi=P(YES)+threshold, sequence는 항상 generate). 보기별 확률이 `<out>.probs.csv`에 저장됨 |
+| `--yes-threshold` | 0.5 | logits 디코딩에서 multi의 P(YES) 채택 기준 |
+
+**threshold 튜닝** (`tune_yes_threshold.py`) — 재추론 없이 사이드카 확률만으로:
+
+```bash
+# 검증 probs로 최적 threshold 탐색
+python src/tune_yes_threshold.py --probs val_pred_v8.csv.probs.csv --gold data/training_qa.csv
+# 찾은 값을 테스트 예측에 적용 (GPU 불필요)
+python src/tune_yes_threshold.py --probs submission_v8.csv.probs.csv --apply submission_v8.csv --threshold 0.35
+```
 | `--modality` | `IR` | 사용할 modality |
 | `--val-users` | (없음) | 예: `9,24` — 해당 user 문항만 추론 (검증용) |
 | `--limit` | 0 | 앞에서 N문항만 (디버그용) |
