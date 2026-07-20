@@ -258,15 +258,49 @@ def person_crop_frames(frames: list[np.ndarray], pad: float = 0.15,
     return [f[y0:y1, x0:x1] for f in frames]
 
 
+def _stratified_motion_indices(frames: list[np.ndarray], n: int,
+                               n_seg: int = 4) -> list[int]:
+    """S1: 클립을 n_seg 구간으로 나눠 각 구간에서 모션 에너지 상위 프레임 선택.
+
+    uniform의 커버리지(초/중/후반 보장) + motion의 정보성(구간별 대표 장면)을 결합.
+    sequence처럼 '모든 구간을 빠짐없이 + 각 구간의 행동이 잘 보이게'가 필요한
+    카테고리를 겨냥한다."""
+    total = len(frames)
+    if total <= n:
+        return list(range(total))
+    small = []
+    for f in frames:
+        g = cv2.cvtColor(f, cv2.COLOR_BGR2GRAY) if f.ndim == 3 else f
+        small.append(cv2.resize(g, (80, 60)))
+    energy = [0.0] + [float(cv2.absdiff(a, b).mean())
+                      for a, b in zip(small, small[1:])]
+
+    bounds = [round(i * total / n_seg) for i in range(n_seg + 1)]
+    per_seg, extra = divmod(n, n_seg)
+    idx: list[int] = []
+    for s in range(n_seg):
+        seg = list(range(bounds[s], bounds[s + 1]))
+        if not seg:
+            continue
+        k = per_seg + (1 if s < extra else 0)
+        idx.extend(sorted(seg, key=lambda i: energy[i], reverse=True)[:k])
+    # 빈 구간 등으로 모자라면 아직 안 뽑힌 인덱스로 채움
+    pool = [i for i in range(total) if i not in idx]
+    while len(idx) < n and pool:
+        idx.append(pool.pop(0))
+    return sorted(idx)[:n]
+
+
 def sample_frames(media_path: Path, n: int, colormap: bool = False,
                   max_side: int = 448, modality: str = "IR",
                   crop_person: bool = False, sampling: str = "uniform",
                   return_pos: bool = False):
     """미디어(파일 or 클립 디렉토리)에서 n프레임 샘플링 → PIL 리스트.
 
-    sampling='uniform'  : 균등 간격 (기본)
-    sampling='motion'   : 후보를 넉넉히(4n, 최소 32장) 읽은 뒤 모션 에너지 기준 keyframe 선택
-    return_pos=True     : (frames, 상대 위치 0~1 리스트) 튜플 반환 — 타임스탬프 계산용
+    sampling='uniform'    : 균등 간격 (기본)
+    sampling='motion'     : 후보를 넉넉히(4n, 최소 32장) 읽은 뒤 모션 에너지 keyframe 선택
+    sampling='stratified' : S1 — 4구간 층화 + 구간별 모션 상위 (sequence 타깃)
+    return_pos=True       : (frames, 상대 위치 0~1 리스트) 튜플 반환 — 타임스탬프 계산용
     """
     n_read = n if sampling == "uniform" else max(4 * n, 32)
     if media_path.is_dir():
@@ -278,8 +312,9 @@ def sample_frames(media_path: Path, n: int, colormap: bool = False,
     raw = [f for f, _ in valid]
     pos = [p for _, p in valid]
 
-    if sampling == "motion" and len(raw) > n:
-        sel = _pick_motion_indices(raw, n)
+    if len(raw) > n and sampling in ("motion", "stratified"):
+        sel = (_pick_motion_indices(raw, n) if sampling == "motion"
+               else _stratified_motion_indices(raw, n))
         raw = [raw[i] for i in sel]
         pos = [pos[i] for i in sel]
 

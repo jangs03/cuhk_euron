@@ -52,10 +52,13 @@ def main():
     ap.add_argument("--crop-person", action="store_true",
                     help="배경 차분으로 사람 활동 영역만 crop (고정 카메라 가정, "
                          "캐시 프레임에도 즉석 적용 가능) — v5 검증에서 성능 하락, 비권장")
-    ap.add_argument("--sampling", choices=["uniform", "motion", "auto"], default="auto",
-                    help="auto=카테고리별 자동 선택 (v6 검증 결과: object_interaction/emotion만 "
-                         "motion, 나머지 uniform). motion 카테고리는 비디오가 있는 루트를 "
-                         "자동으로 우선 사용")
+    ap.add_argument("--sampling", choices=["uniform", "motion", "stratified", "auto"],
+                    default="auto",
+                    help="auto=카테고리별 자동 선택: object_interaction/emotion=motion, "
+                         "sequence=stratified(S1: 4구간 층화+구간별 모션 상위), 나머지 uniform. "
+                         "비균등 샘플링 카테고리는 비디오가 있는 루트를 자동 우선 사용")
+    ap.add_argument("--category", default="",
+                    help="쉼표로 카테고리 필터 (빠른 검증용). 예: sequence 또는 multi,sequence")
     ap.add_argument("--colormap", action="store_true", help="depth를 JET 컬러맵으로 변환")
     ap.add_argument("--modality", default="IR",
                     help="IR / Depth_Color / Depth / Thermal (없으면 선호 순서로 fallback). "
@@ -71,6 +74,11 @@ def main():
         users = {int(u) for u in args.val_users.split(",")}
         df = df[df["path"].map(data_utils.extract_user).isin(users)]
         print(f"val users {sorted(users)}: {len(df)} rows")
+
+    if args.category:
+        cats = {c.strip() for c in args.category.split(",") if c.strip()}
+        df = df[df["category"].isin(cats)]
+        print(f"category filter {sorted(cats)}: {len(df)} rows")
 
     if args.limit:
         df = df.head(args.limit)
@@ -113,11 +121,16 @@ def main():
             letters = list(options.keys())
             try:
                 # 카테고리별 샘플링 전략 (v6 검증: motion은 obj_interaction +7.4%p,
-                # emotion +3.0%p / HAU single -11.1%p, multi -4.0%p)
+                # emotion +3.0%p / HAU single -11.1%p, multi -4.0%p.
+                # sequence는 S1 층화 motion — 구간 커버리지 + 구간별 대표 장면)
                 sampling = args.sampling
                 if sampling == "auto":
-                    sampling = ("motion" if category in ("object_interaction", "emotion")
-                                else "uniform")
+                    if category in ("object_interaction", "emotion"):
+                        sampling = "motion"
+                    elif category == "sequence":
+                        sampling = "stratified"
+                    else:
+                        sampling = "uniform"
 
                 # test path는 modality 파일을 직접 가리킴 → 원하는 modality로 교체 시도,
                 # 해당 modality가 없는 클립이면 원본 경로로 fallback
@@ -125,8 +138,8 @@ def main():
                 rel_candidates = [rel] if rel == str(row["path"]) else [rel, str(row["path"])]
 
                 media = None
-                if sampling == "motion":
-                    # 모션 샘플링은 후보 프레임이 많아야 함 → 비디오가 있는 루트 우선
+                if sampling in ("motion", "stratified"):
+                    # 비균등 샘플링은 후보 프레임이 많아야 함 → 비디오가 있는 루트 우선
                     for rc in rel_candidates:
                         for root in media_roots:
                             try:

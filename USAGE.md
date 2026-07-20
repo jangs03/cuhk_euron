@@ -95,7 +95,8 @@ python src/run_baseline.py --qa data/test_qa.csv --out submission.csv \
 | `--seq-frames` | 16 | sequence 문항 전용 프레임 수 |
 | `--multi-mode` | `binary` | multi 문항 처리: `binary`=보기별 yes/no 분해(권장), `joint`=한 번에 질문 |
 | `--crop-person` | off | 배경 차분으로 사람 영역 crop — **v5 검증에서 전면 하락 (비권장, 기록용)** |
-| `--sampling` | `auto` | 카테고리별 자동 선택: object_interaction·emotion=motion(keyframe), 나머지=uniform. motion 카테고리는 비디오가 있는 루트를 자동 우선 사용 |
+| `--sampling` | `auto` | 카테고리별 자동 선택: object_interaction·emotion=motion, **sequence=stratified(S1: 4구간 층화+구간별 모션 상위)**, 나머지=uniform. 비균등 샘플링 카테고리는 비디오가 있는 루트를 자동 우선 사용 |
+| `--category` | (없음) | 쉼표로 카테고리 필터 — 빠른 검증용. 예: `--category sequence` (45문항, ~1분) |
 | `--decoding` | `generate` | `logits`=자유 생성 대신 로그확률로 답 선택 (single류=글자 확률 비교, multi=P(YES)+threshold, sequence는 항상 generate). 보기별 확률이 `<out>.probs.csv`에 저장됨 |
 | `--yes-threshold` | 0.5 | logits 디코딩에서 multi의 P(YES) 채택 기준 |
 | `--quant` | `none` | `4bit`/`8bit` = bitsandbytes 양자화 (VRAM 절감용). 속도 목적이면 아래 AWQ 권장 |
