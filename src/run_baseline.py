@@ -49,6 +49,9 @@ def main():
     ap.add_argument("--quant", choices=["none", "4bit", "8bit"], default="none",
                     help="bitsandbytes 양자화 (VRAM 절감용, T4 등 저사양 GPU). "
                          "속도가 목적이면 --model ...-AWQ 체크포인트 권장")
+    ap.add_argument("--trust-remote-code", action="store_true",
+                    help="모델 저장소의 코드를 실행 (InternVL 등 일부 모델에 필요). "
+                         "신뢰할 수 있는 공식 저장소에만 사용할 것")
     # ── non-visual 센서 큐 (fused csv 필요: *_nonvisual_fused_prompt.csv) ──
     ap.add_argument("--nonvisual", default="",
                     help="프롬프트에 주입할 센서 큐. 전역: 'imu,skeleton' / "
@@ -139,7 +142,8 @@ def main():
 
     from vlm import load_model
     model = load_model(args.model,
-                       quant=None if args.quant == "none" else args.quant)
+                       quant=None if args.quant == "none" else args.quant,
+                       trust_remote_code=args.trust_remote_code)
 
     write_header = not out_path.exists()
     # logits 디코딩 시 확률 사이드카: threshold 재튜닝/앙상블에 재사용 (재추론 불필요)

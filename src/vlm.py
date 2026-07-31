@@ -20,16 +20,34 @@ def _attn_implementation() -> str:
     return "sdpa"
 
 
+def _load_backbone(model_name: str, kwargs: dict):
+    """모델 클래스 자동 선택 — Qwen2.5-VL / Qwen3-VL / InternVL 등을 --model만으로 교체.
+
+    최신 transformers의 범용 클래스를 먼저 시도하고, 실패 시 Qwen2.5-VL 전용
+    클래스로 폴백한다 (구버전 transformers 호환)."""
+    try:
+        from transformers import AutoModelForImageTextToText
+        return AutoModelForImageTextToText.from_pretrained(model_name, **kwargs)
+    except Exception as e:
+        print(f"[vlm] 범용 로더 실패({type(e).__name__}) → Qwen2.5-VL 클래스로 재시도")
+        from transformers import Qwen2_5_VLForConditionalGeneration
+        kwargs.pop("trust_remote_code", None)
+        return Qwen2_5_VLForConditionalGeneration.from_pretrained(model_name, **kwargs)
+
+
 class QwenVLM:
     def __init__(self, model_name: str = config.DEFAULT_MODEL,
-                 quant: str | None = None):
+                 quant: str | None = None, trust_remote_code: bool = False):
         """quant: None(bf16) / '4bit' / '8bit' (bitsandbytes 온더플라이 양자화).
 
         속도가 목적이면 quant보다 AWQ 체크포인트를 권장:
           --model Qwen/Qwen2.5-VL-7B-Instruct-AWQ  (+ pip install autoawq)
         AWQ는 융합 커널이라 빠르고 VRAM ~1/3, bnb 4bit는 VRAM 절감용(속도는 비슷하거나 느림).
+
+        trust_remote_code: 모델 저장소의 코드를 실행합니다 (InternVL 등 일부 모델에 필요).
+        신뢰할 수 있는 공식 저장소에만 사용하세요.
         """
-        from transformers import AutoProcessor, Qwen2_5_VLForConditionalGeneration
+        from transformers import AutoProcessor
 
         # T4(Turing)는 bf16 미지원 → fp16으로 자동 하향. Ampere+(A100/L4)는 bf16.
         if torch.cuda.is_available():
@@ -54,11 +72,15 @@ class QwenVLM:
             else:
                 kwargs["quantization_config"] = BitsAndBytesConfig(load_in_8bit=True)
 
-        self.model = Qwen2_5_VLForConditionalGeneration.from_pretrained(
-            model_name, **kwargs)
-        self.processor = AutoProcessor.from_pretrained(model_name)
-        print(f"[vlm] {model_name} | attn={kwargs['attn_implementation']}"
-              f" | quant={quant or ('awq' if 'awq' in model_name.lower() else 'bf16')}")
+        if trust_remote_code:
+            kwargs["trust_remote_code"] = True
+
+        self.model = _load_backbone(model_name, kwargs)
+        self.processor = AutoProcessor.from_pretrained(
+            model_name, trust_remote_code=trust_remote_code)
+        print(f"[vlm] {model_name} | {type(self.model).__name__}"
+              f" | dtype={dtype} | attn={kwargs['attn_implementation']}"
+              f" | quant={quant or ('awq' if 'awq' in model_name.lower() else 'none')}")
 
     def _build_inputs(self, frames, prompt: str, times: list[float] | None = None,
                       assistant_prefix: str = ""):
@@ -143,5 +165,6 @@ class QwenVLM:
         return float(torch.softmax(pair, dim=0)[0])
 
 
-def load_model(name: str, quant: str | None = None):
-    return QwenVLM(name, quant=quant)
+def load_model(name: str, quant: str | None = None,
+               trust_remote_code: bool = False):
+    return QwenVLM(name, quant=quant, trust_remote_code=trust_remote_code)

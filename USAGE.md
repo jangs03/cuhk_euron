@@ -90,7 +90,8 @@ python src/run_baseline.py --qa data/test_qa.csv --out submission.csv \
 | `--qa` | `data/test_qa.csv` | 질문 csv |
 | `--out` | `submission.csv` | 출력 (qa_id,prediction) |
 | `--media-root` | `data` | 쉼표로 여러 개, **앞이 우선** (`data/cache,data` = 캐시 우선) |
-| `--model` | `Qwen/Qwen2.5-VL-3B-Instruct` | VRAM 16GB↑면 `Qwen/Qwen2.5-VL-7B-Instruct` 권장 |
+| `--model` | `Qwen/Qwen2.5-VL-3B-Instruct` | HF의 VLM이면 대부분 그대로 교체 가능 (아래 모델 표 참고) |
+| `--trust-remote-code` | off | InternVL 등 저장소 코드 실행이 필요한 모델용 |
 | `--frames` | 8 | 클립당 입력 프레임 수 |
 | `--seq-frames` | 16 | sequence 문항 전용 프레임 수 |
 | `--multi-mode` | `binary` | multi 문항 처리: `binary`=보기별 yes/no 분해(권장), `joint`=한 번에 질문 |
@@ -154,6 +155,22 @@ python src/check_option_bias.py --probs val_visual.csv.probs.csv \
     --gold data/train_nonvisual_fused_prompt.csv
 # → 편차가 크면 출력된 --option-prior '...' 를 붙여 재실행 후 비교
 ```
+
+### 모델 교체 (`--model`만 바꾸면 됨)
+
+`vlm.py`가 `AutoModelForImageTextToText`로 자동 로드하므로 HF의 VLM 대부분이 코드 수정 없이 동작합니다.
+
+| 모델 | 크기 | 특징 | 비고 |
+|---|---|---|---|
+| `Qwen/Qwen2.5-VL-7B-Instruct` | 7B | 현재 기준선 (v1~v9 튜닝 대상) | — |
+| **`Qwen/Qwen3-VL-8B-Instruct`** | 8B | Qwen2.5-VL의 직계 후속, 비디오 이해 대폭 향상 | **1순위 시도** |
+| `Qwen/Qwen3-VL-32B-Instruct` | 32B | 상용 모델급 성능 | A100 필요(+`--quant 4bit`) |
+| `Qwen/Qwen3-VL-4B-Instruct` | 4B | T4에서도 여유 | 저사양용 |
+| `OpenGVLab/InternVL3_5-8B` | 8B | **다른 계열**(InternViT) — 앙상블 다양성 최대 | `--trust-remote-code` 필요할 수 있음 |
+| `Qwen/Qwen2.5-VL-7B-Instruct-AWQ` | 7B | 4bit, 속도 ~2배·VRAM 1/3 | `pip install autoawq` |
+
+> 새 모델을 처음 돌릴 땐 `--limit 20`으로 로드·출력 형식부터 확인하세요.
+> 로드 시 `[vlm] <모델> | <클래스> | dtype=... | attn=...` 로그로 실제 적용 상태를 알 수 있습니다.
 
 **속도 최적화 가이드** (효과 순, 조합 가능):
 
