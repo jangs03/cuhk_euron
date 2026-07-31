@@ -3,6 +3,8 @@
 다른 모델/API로 바꾸려면 answer(frames, prompt) -> str 인터페이스만 맞추면 된다.
 로짓 기반 디코딩(option_logprobs/yes_probability)은 지원하는 백엔드만 구현하면 됨.
 """
+import math
+
 import torch
 
 import config
@@ -105,11 +107,17 @@ class QwenVLM:
 
     @torch.inference_mode()
     def option_logprobs(self, frames, prompt: str, words: list[str],
-                        times: list[float] | None = None) -> dict[str, float]:
+                        times: list[float] | None = None,
+                        prior: dict[str, float] | None = None) -> dict[str, float]:
         """'ANSWER:' 다음 첫 토큰의 로그확률로 각 후보 단어를 스코어링.
 
         자유 생성 대신 모델의 확신을 직접 읽는다 — 생성 노이즈/파싱 실패 제거.
         words 예: ["A","B","C","D"] 또는 ["YES","NO"].
+
+        prior: 보기 글자별 사전 편향 (예: {"A":0.31,"B":0.24,...}).
+        주면 log(prior)를 빼서 위치 편향을 제거한다 (PriDe/contextual calibration).
+        VLM은 특정 글자를 선호하는 경향이 있어 객관식 정확도를 깎는다 —
+        src/check_option_bias.py로 측정 후 --option-prior로 주입.
         """
         inputs = self._build_inputs(frames, prompt, times, assistant_prefix="ANSWER:")
         logits = self.model(**inputs).logits[0, -1]
@@ -118,6 +126,12 @@ class QwenVLM:
         for w in words:
             ids = self._first_token_ids(w)
             scores[w] = float(torch.logsumexp(logprobs[ids], dim=0))
+        if prior:
+            # 사용 가능한 보기에 대해서만 prior 재정규화 (HARn single은 3지선다)
+            avail = {w: prior[w] for w in words if w in prior and prior[w] > 0}
+            if len(avail) == len(words):
+                z = sum(avail.values())
+                scores = {w: s - math.log(avail[w] / z) for w, s in scores.items()}
         return scores
 
     @torch.inference_mode()

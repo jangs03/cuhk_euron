@@ -1,0 +1,105 @@
+"""여러 실험 결과를 한 표로 비교 (ablation 표 자동 생성).
+
+non-visual 6종 실험처럼 여러 예측 csv를 한 번에 채점하고, 기준(baseline) 대비
+카테고리별 증감을 표로 출력한다. GPU 불필요.
+
+사용:
+  python src/compare_runs.py --gold data/train_nonvisual_fused_prompt.csv \\
+      --runs "Visual only=val_v9_visual.csv" \\
+             "Visual+IMU=val_v9_imu.csv" \\
+             "Visual+Radar=val_v9_radar.csv" \\
+             "Visual+Skeleton=val_v9_skel.csv" \\
+             "Visual+IMU+Skeleton=val_v9_imu_skel.csv" \\
+             "Visual+All=val_v9_all.csv"
+
+첫 번째 run이 기준선이 된다. --markdown 을 주면 노션에 붙일 표로 출력.
+"""
+import argparse
+import sys
+from pathlib import Path
+
+sys.path.insert(0, str(Path(__file__).parent))
+
+import pandas as pd
+
+from evaluate import is_correct
+
+CAT_ORDER = ["single", "combination", "emotion", "multi", "sequence",
+             "object_interaction"]
+
+
+def score(pred_path: str, gold: pd.DataFrame) -> tuple[pd.Series, float, int]:
+    pred = pd.read_csv(pred_path, dtype=str)
+    col = "prediction" if "prediction" in pred.columns else "answer"
+    m = pred[["qa_id", col]].rename(columns={col: "pred"}).merge(gold, on="qa_id")
+    if m.empty:
+        raise SystemExit(f"{pred_path}: gold와 겹치는 qa_id 없음")
+    m["ok"] = [is_correct(p, g, c)
+               for p, g, c in zip(m["pred"], m["answer"], m["category"])]
+    by_cat = m.groupby("category")["ok"].mean()
+    return by_cat, float(m["ok"].mean()), len(m)
+
+
+def main():
+    ap = argparse.ArgumentParser()
+    ap.add_argument("--gold", default="data/training_qa.csv")
+    ap.add_argument("--runs", nargs="+", required=True,
+                    help='"이름=경로.csv" 형식. 첫 번째가 기준선')
+    ap.add_argument("--markdown", action="store_true", help="노션용 마크다운 표로 출력")
+    args = ap.parse_args()
+
+    gold = pd.read_csv(args.gold, dtype=str, keep_default_na=False)
+    gold = gold[["qa_id", "category", "answer"]]
+
+    results, counts = {}, {}
+    for spec in args.runs:
+        if "=" not in spec:
+            raise SystemExit(f'--runs 형식 오류: "{spec}" (이름=경로.csv)')
+        name, path = spec.split("=", 1)
+        if not Path(path).exists():
+            print(f"⚠️  건너뜀 (파일 없음): {name} → {path}")
+            continue
+        by_cat, overall, n = score(path, gold)
+        results[name] = by_cat
+        counts[name] = (overall, n)
+
+    if not results:
+        raise SystemExit("채점할 결과가 없습니다")
+
+    cats = [c for c in CAT_ORDER if any(c in r.index for r in results.values())]
+    base_name = next(iter(results))
+    base = results[base_name]
+
+    header = ["실험"] + cats + ["전체", "vs 기준"]
+    rows = []
+    for name, by_cat in results.items():
+        overall, n = counts[name]
+        cells = [f"{by_cat.get(c, float('nan')):.3f}" if c in by_cat.index else "-"
+                 for c in cats]
+        delta = "기준" if name == base_name else f"{overall - counts[base_name][0]:+.4f}"
+        rows.append([name] + cells + [f"**{overall:.4f}** (n={n})", delta])
+
+    if args.markdown:
+        print("| " + " | ".join(header) + " |")
+        print("|" + "|".join(["---"] * len(header)) + "|")
+        for r in rows:
+            print("| " + " | ".join(r) + " |")
+    else:
+        w = [max(len(str(r[i])) for r in [header] + rows) for i in range(len(header))]
+        print(" | ".join(h.ljust(w[i]) for i, h in enumerate(header)))
+        print("-+-".join("-" * x for x in w))
+        for r in rows:
+            print(" | ".join(str(c).ljust(w[i]) for i, c in enumerate(r)))
+
+    # 카테고리별 최고 조합 — 카테고리 조건부 채택 판단용
+    print("\n카테고리별 최고 조합 (조건부 적용 후보):")
+    for c in cats:
+        vals = {n: r[c] for n, r in results.items() if c in r.index}
+        best = max(vals, key=vals.get)
+        gain = vals[best] - base.get(c, 0)
+        mark = "" if best == base_name else f"  (기준 대비 {gain:+.3f})"
+        print(f"  {c:20s} {best:24s} {vals[best]:.3f}{mark}")
+
+
+if __name__ == "__main__":
+    main()

@@ -24,7 +24,7 @@ from tqdm import tqdm
 import config
 import data_utils
 from parse_answer import parse_answer, parse_yes_no
-from prompts import build_binary_prompt, build_prompt
+from prompts import build_binary_prompt, build_nonvisual_block, build_prompt
 
 
 def main():
@@ -49,6 +49,23 @@ def main():
     ap.add_argument("--quant", choices=["none", "4bit", "8bit"], default="none",
                     help="bitsandbytes 양자화 (VRAM 절감용, T4 등 저사양 GPU). "
                          "속도가 목적이면 --model ...-AWQ 체크포인트 권장")
+    # ── non-visual 센서 큐 (fused csv 필요: *_nonvisual_fused_prompt.csv) ──
+    ap.add_argument("--nonvisual", default="",
+                    help="프롬프트에 주입할 센서 큐. 쉼표 조합: imu / radar / skeleton "
+                         "(예: --nonvisual imu,skeleton). 빈 값이면 Visual only")
+    ap.add_argument("--nonvisual-categories", default="",
+                    help="센서 큐를 적용할 카테고리 (기본: 전체). 예: emotion,multi")
+    ap.add_argument("--nonvisual-min-quality", choices=["good", "partial", "poor"],
+                    default="partial",
+                    help="이 등급 미만인 modality는 프롬프트에서 제외 (기본 partial)")
+    ap.add_argument("--nonvisual-dedup", action="store_true",
+                    help="센서 블록의 중복/무정보 문장 제거 (토큰 절약)")
+    ap.add_argument("--max-side", type=int, default=448,
+                    help="프레임 리사이즈 긴 변 픽셀 (해상도 실험용: 448 → 672 등)")
+    ap.add_argument("--option-prior", default="",
+                    help="보기 위치 편향 제거 (decoding=logits 전용). "
+                         "예: 'A:0.31,B:0.24,C:0.23,D:0.22'. "
+                         "src/check_option_bias.py 출력값을 그대로 붙여넣으면 됨")
     ap.add_argument("--crop-person", action="store_true",
                     help="배경 차분으로 사람 활동 영역만 crop (고정 카메라 가정, "
                          "캐시 프레임에도 즉석 적용 가능) — v5 검증에서 성능 하락, 비권장")
@@ -69,6 +86,27 @@ def main():
 
     df = data_utils.load_qa(args.qa)
     media_roots = [Path(r.strip()) for r in args.media_root.split(",") if r.strip()]
+
+    # non-visual 설정: fused csv에 큐 컬럼이 있어야 함
+    nv_mods = [m.strip().lower() for m in args.nonvisual.split(",") if m.strip()]
+    nv_cats = {c.strip() for c in args.nonvisual_categories.split(",") if c.strip()}
+    if nv_mods:
+        from prompts import NONVISUAL_COLUMNS
+        missing = [NONVISUAL_COLUMNS[m][0] for m in nv_mods
+                   if NONVISUAL_COLUMNS[m][0] not in df.columns]
+        if missing:
+            raise SystemExit(
+                f"--nonvisual {args.nonvisual} 인데 컬럼이 없습니다: {missing}\n"
+                f"  → --qa 를 *_nonvisual_fused_prompt.csv 로 지정하세요")
+        print(f"nonvisual: {nv_mods} | quality>={args.nonvisual_min_quality}"
+              f"{' | dedup' if args.nonvisual_dedup else ''}"
+              f"{' | categories=' + str(sorted(nv_cats)) if nv_cats else ''}")
+
+    option_prior = None
+    if args.option_prior:
+        option_prior = {kv.split(":")[0].strip().upper(): float(kv.split(":")[1])
+                        for kv in args.option_prior.split(",") if ":" in kv}
+        print(f"option prior (debias): {option_prior}")
 
     if args.val_users:
         users = {int(u) for u in args.val_users.split(",")}
@@ -157,10 +195,12 @@ def main():
                     except FileNotFoundError:
                         media = data_utils.resolve_media(row["path"], media_roots)
                 n_frames = args.seq_frames if category == "sequence" else args.frames
+                # 샘플링은 완전 결정적(난수 없음) → 같은 클립·같은 인자면 항상 동일 프레임.
+                # non-visual ablation의 "동일 IR frames" 조건이 코드로 보장됨.
                 frames, pos = data_utils.sample_frames(
                     media, n_frames, args.colormap, modality=args.modality,
                     crop_person=args.crop_person, sampling=sampling,
-                    return_pos=True)
+                    max_side=args.max_side, return_pos=True)
 
                 # 클립 길이/타임스탬프: 검증 결과 emotion(+5%p)·multi에만 도움이 되고
                 # single/sequence에는 노이즈였음 → 해당 카테고리에만 적용 (v4)
@@ -183,11 +223,18 @@ def main():
 
                 use_logits = args.decoding == "logits" and category != "sequence"
 
+                # non-visual 센서 큐 블록 (해당 카테고리에만 적용)
+                nv_block = ""
+                if nv_mods and (not nv_cats or category in nv_cats):
+                    nv_block = build_nonvisual_block(
+                        row, nv_mods, args.nonvisual_min_quality, args.nonvisual_dedup)
+
                 if category == "multi" and args.multi_mode == "binary":
                     if use_logits:
                         # 보기별 P(YES)를 뽑아 threshold로 채택 (하드 YES/NO보다 조절 가능)
                         probs = {L: model.yes_probability(
-                                     frames, build_binary_prompt(opt, duration), times)
+                                     frames, build_binary_prompt(opt, duration, nv_block),
+                                     times)
                                  for L, opt in options.items()}
                         for L, p in probs.items():
                             probs_writer.writerow([qa_id, category, L, f"{p:.4f}"])
@@ -201,18 +248,21 @@ def main():
                         # 보기별로 "영상에 등장하나?"를 따로 물어 yes인 것을 모은다
                         yes = [L for L, opt in options.items()
                                if parse_yes_no(model.answer(
-                                   frames, build_binary_prompt(opt, duration), times))]
+                                   frames, build_binary_prompt(opt, duration, nv_block),
+                                   times))]
                         if yes:
                             ans = "".join(sorted(yes))
                         else:  # 전부 no면 joint 질문으로 fallback
                             prompt = build_prompt(str(row["question"]), options,
-                                                  category, duration)
+                                                  category, duration, nv_block)
                             ans = parse_answer(model.answer(frames, prompt, times),
                                                category, letters)
                 elif use_logits:
                     # single류: 보기 글자 토큰의 로그확률 직접 비교 (생성/파싱 노이즈 제거)
-                    prompt = build_prompt(str(row["question"]), options, category, duration)
-                    lp = model.option_logprobs(frames, prompt, letters, times)
+                    prompt = build_prompt(str(row["question"]), options, category,
+                                          duration, nv_block)
+                    lp = model.option_logprobs(frames, prompt, letters, times,
+                                               prior=option_prior)
                     z = max(lp.values())
                     total = sum(math.exp(v - z) for v in lp.values())
                     for L in letters:
@@ -221,7 +271,8 @@ def main():
                     probs_f.flush()
                     ans = max(lp, key=lp.get)
                 else:
-                    prompt = build_prompt(str(row["question"]), options, category, duration)
+                    prompt = build_prompt(str(row["question"]), options, category,
+                                          duration, nv_block)
                     raw = model.answer(frames, prompt, times)
                     ans = parse_answer(raw, category, letters)
             except Exception:

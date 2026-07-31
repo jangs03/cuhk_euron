@@ -100,6 +100,47 @@ python src/run_baseline.py --qa data/test_qa.csv --out submission.csv \
 | `--decoding` | `generate` | `logits`=자유 생성 대신 로그확률로 답 선택 (single류=글자 확률 비교, multi=P(YES)+threshold, sequence는 항상 generate). 보기별 확률이 `<out>.probs.csv`에 저장됨 |
 | `--yes-threshold` | 0.5 | logits 디코딩에서 multi의 P(YES) 채택 기준 |
 | `--quant` | `none` | `4bit`/`8bit` = bitsandbytes 양자화 (VRAM 절감용). 속도 목적이면 아래 AWQ 권장 |
+| `--nonvisual` | (없음) | 프롬프트에 주입할 센서 큐: `imu` / `radar` / `skeleton` 조합. **`--qa`를 fused csv로 지정해야 함** |
+| `--nonvisual-categories` | 전체 | 센서 큐를 적용할 카테고리 (예: `emotion,multi`) |
+| `--nonvisual-min-quality` | `partial` | 이 등급 미만 modality는 제외 (poor 데이터 차단) |
+| `--nonvisual-dedup` | off | 센서 블록의 중복/무정보 문장 제거 (~7% 토큰 절감) |
+| `--max-side` | 448 | 프레임 리사이즈 긴 변 (해상도 실험: 448 → 672) |
+| `--option-prior` | (없음) | 보기 위치 편향 제거 (logits 전용). `check_option_bias.py` 출력을 붙여넣기 |
+
+### Non-visual 센서 큐 ablation (6종 실험)
+
+`train/test_nonvisual_fused_prompt.csv`를 `--qa`로 쓰면 센서 큐 컬럼이 함께 로드됩니다.
+**샘플링은 완전 결정적이라 모든 실험이 동일한 IR 프레임을 사용합니다** (비시각 입력만 변수).
+
+```bash
+BASE="--qa data/train_nonvisual_fused_prompt.csv --val-users 9,24 \
+  --media-root data/cache,data --decoding logits"
+
+python src/run_baseline.py $BASE --out val_visual.csv                              # ① Visual only
+python src/run_baseline.py $BASE --out val_imu.csv       --nonvisual imu           # ② +IMU
+python src/run_baseline.py $BASE --out val_radar.csv     --nonvisual radar         # ③ +Radar
+python src/run_baseline.py $BASE --out val_skel.csv      --nonvisual skeleton      # ④ +Skeleton
+python src/run_baseline.py $BASE --out val_imuskel.csv   --nonvisual imu,skeleton  # ⑤ +IMU+Skeleton
+python src/run_baseline.py $BASE --out val_all.csv       --nonvisual imu,radar,skeleton  # ⑥ +All
+```
+
+결과를 한 표로 비교 (`--markdown`이면 노션용):
+
+```bash
+python src/compare_runs.py --gold data/train_nonvisual_fused_prompt.csv --markdown \
+  --runs "Visual only=val_visual.csv" "Visual+IMU=val_imu.csv" "Visual+Radar=val_radar.csv" \
+         "Visual+Skeleton=val_skel.csv" "Visual+IMU+Skeleton=val_imuskel.csv" "Visual+All=val_all.csv"
+```
+
+### 보기 위치 편향 진단 (`check_option_bias.py`)
+
+VLM은 내용과 무관하게 특정 보기 글자를 선호합니다. logits 디코딩으로 검증을 돌린 뒤:
+
+```bash
+python src/check_option_bias.py --probs val_visual.csv.probs.csv \
+    --gold data/train_nonvisual_fused_prompt.csv
+# → 편차가 크면 출력된 --option-prior '...' 를 붙여 재실행 후 비교
+```
 
 **속도 최적화 가이드** (효과 순, 조합 가능):
 

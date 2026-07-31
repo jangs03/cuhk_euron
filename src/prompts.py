@@ -53,27 +53,93 @@ SYSTEM_PROMPT = (
 
 
 def build_prompt(question: str, options: dict, category: str,
-                 duration: float | None = None) -> str:
+                 duration: float | None = None, nonvisual: str = "") -> str:
     opts_text = "\n".join(f"{k}. {v}" for k, v in options.items())
     instruction = CATEGORY_INSTRUCTIONS.get(category, CATEGORY_INSTRUCTIONS["single"])
     dur_line = ""
     if duration:
         # 클립 길이는 행동 속도/태도 판단의 핵심 단서 (짧은 클립 = 서두른 동작)
         dur_line = f"(The full clip is {duration:.1f} seconds long; frames span it evenly.)\n"
+    nv = f"{nonvisual}\n\n" if nonvisual else ""
+    # 답 형식 지시(instruction)는 항상 마지막 — 형식 준수율이 가장 높은 위치
     return (
         f"{dur_line}"
+        f"{nv}"
         f"Question: {question}\n\n"
         f"Options:\n{opts_text}\n\n"
         f"{instruction}"
     )
 
 
-def build_binary_prompt(action: str, duration: float | None = None) -> str:
+def build_binary_prompt(action: str, duration: float | None = None,
+                        nonvisual: str = "") -> str:
     """multi 이진 분해용: 보기 하나가 영상에 등장하는지 yes/no로 묻는다."""
     dur_line = f"(The full clip is {duration:.1f} seconds long.)\n" if duration else ""
+    nv = f"{nonvisual}\n\n" if nonvisual else ""
     return (
         f"{dur_line}"
+        f"{nv}"
         f'Question: Does the action "{action}" appear at ANY point in this video?\n'
         "Check every frame carefully before deciding. "
         "Reply with 'ANSWER: YES' or 'ANSWER: NO' only."
     )
+
+
+# ─────────────────────────── non-visual 센서 큐 ───────────────────────────
+# fused csv(train/test_nonvisual_fused_prompt.csv)의 컬럼 매핑
+NONVISUAL_COLUMNS = {
+    "imu": ("imu_prompt_block", "imu_quality"),
+    "radar": ("radar_prompt_block", "radar_quality"),
+    "skeleton": ("skeleton_prompt_block", "sk_quality"),
+}
+NONVISUAL_HEADER = (
+    "[NONVISUAL SENSOR CUES]\n"
+    "These cues describe body motion and spatial change. "
+    "They are supporting evidence, not action labels. "
+    "If a cue conflicts with what you see in the frames, trust the frames."
+)
+_QUALITY_RANK = {"good": 3, "partial": 2, "poor": 1, "": 0}
+
+
+def _dedup_lines(block: str) -> str:
+    """중복/무정보 문장 제거 (--nonvisual-dedup).
+
+    실측 확인된 문제: IMU 블록에 같은 뜻의 문장이 2개
+    ("Body movement is strongest in the late part" ≒ "The strongest body movement
+    occurs in the late part"), Skeleton의 'Reliability: good'은 94.7% 클립에서
+    동일해 정보가 없다."""
+    seen, out = set(), []
+    for ln in block.split("\n"):
+        s = ln.strip()
+        if s.lower().startswith("- reliability: good"):
+            continue  # 상수 라인 → 토큰 낭비
+        # 의미 중복 판정: 어순/관사 무시한 단어 집합
+        key = frozenset(w for w in s.lower().strip("-. ").split()
+                        if w not in ("the", "a", "is", "of", "in", "occurs", "part"))
+        if s.startswith("-"):
+            if key in seen:
+                continue
+            seen.add(key)
+        out.append(ln)
+    return "\n".join(out)
+
+
+def build_nonvisual_block(row, modalities: list[str], min_quality: str = "partial",
+                          dedup: bool = False) -> str:
+    """fused csv 행에서 선택된 modality의 큐 블록을 조립.
+
+    modalities: ["imu"], ["imu","skeleton"], ["imu","radar","skeleton"] 등
+    min_quality: 이 등급 미만(기본 poor/빈값)이면 해당 modality 제외
+    """
+    floor = _QUALITY_RANK.get(min_quality, 2)
+    parts = []
+    for m in modalities:
+        col, qcol = NONVISUAL_COLUMNS[m]
+        block = str(row.get(col, "") or "").strip()
+        qual = str(row.get(qcol, "") or "").strip().lower()
+        if not block or _QUALITY_RANK.get(qual, 0) < floor:
+            continue  # 품질 미달 → 프롬프트에서 제외 (팀 설계 원칙)
+        parts.append(_dedup_lines(block) if dedup else block)
+    if not parts:
+        return ""
+    return NONVISUAL_HEADER + "\n\n" + "\n\n".join(parts)
