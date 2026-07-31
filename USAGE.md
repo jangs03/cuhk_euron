@@ -100,8 +100,8 @@ python src/run_baseline.py --qa data/test_qa.csv --out submission.csv \
 | `--decoding` | `generate` | `logits`=자유 생성 대신 로그확률로 답 선택 (single류=글자 확률 비교, multi=P(YES)+threshold, sequence는 항상 generate). 보기별 확률이 `<out>.probs.csv`에 저장됨 |
 | `--yes-threshold` | 0.5 | logits 디코딩에서 multi의 P(YES) 채택 기준 |
 | `--quant` | `none` | `4bit`/`8bit` = bitsandbytes 양자화 (VRAM 절감용). 속도 목적이면 아래 AWQ 권장 |
-| `--nonvisual` | (없음) | 프롬프트에 주입할 센서 큐: `imu` / `radar` / `skeleton` 조합. **`--qa`를 fused csv로 지정해야 함** |
-| `--nonvisual-categories` | 전체 | 센서 큐를 적용할 카테고리 (예: `emotion,multi`) |
+| `--nonvisual` | (없음) | 센서 큐 지정. 전역 `imu,skeleton` 또는 **카테고리별** `emotion=imu,skeleton;multi=imu`. **`--qa`를 fused csv로 지정해야 함** |
+| `--nonvisual-categories` | 전체 | 전역 지정 시 적용 카테고리 제한 (카테고리별 지정을 쓰면 불필요) |
 | `--nonvisual-min-quality` | `partial` | 이 등급 미만 modality는 제외 (poor 데이터 차단) |
 | `--nonvisual-dedup` | off | 센서 블록의 중복/무정보 문장 제거 (~7% 토큰 절감) |
 | `--max-side` | 448 | 프레임 리사이즈 긴 변 (해상도 실험: 448 → 672) |
@@ -131,6 +131,19 @@ python src/compare_runs.py --gold data/train_nonvisual_fused_prompt.csv --markdo
   --runs "Visual only=val_visual.csv" "Visual+IMU=val_imu.csv" "Visual+Radar=val_radar.csv" \
          "Visual+Skeleton=val_skel.csv" "Visual+IMU+Skeleton=val_imuskel.csv" "Visual+All=val_all.csv"
 ```
+
+### 카테고리별로 다른 센서 조합 적용 (v7식 조건부 최적화)
+
+`compare_runs.py`가 카테고리별 승자를 보고 **적용 명령을 자동 생성**합니다:
+
+```
+카테고리 조건부 적용 명령:
+  --nonvisual "emotion=imu,skeleton;multi=imu;object_interaction=skeleton"
+```
+
+이 명령을 그대로 붙여 전체 검증을 한 번 더 돌려 실제 이득을 확인하세요.
+명시되지 않은 카테고리(single 등)는 센서 큐가 붙지 않아 토큰도 절약됩니다.
+`*=imu;emotion=imu,skeleton`처럼 기본값 + 예외 형태도 가능합니다.
 
 ### 보기 위치 편향 진단 (`check_option_bias.py`)
 

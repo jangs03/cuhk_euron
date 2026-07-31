@@ -124,6 +124,40 @@ def _dedup_lines(block: str) -> str:
     return "\n".join(out)
 
 
+def parse_nonvisual_spec(spec: str) -> dict[str, list[str]]:
+    """--nonvisual 값을 카테고리별 modality 매핑으로 파싱.
+
+    전역 지정:      "imu,skeleton"          → {"*": ["imu","skeleton"]}
+    카테고리별 지정: "emotion=imu,skeleton;multi=imu;object_interaction=skeleton"
+                   → {"emotion": [...], "multi": [...], "object_interaction": [...]}
+                   (명시되지 않은 카테고리는 센서 큐 없음)
+    두 형식을 섞을 수도 있다: "*=imu;emotion=imu,skeleton"
+    """
+    spec = (spec or "").strip()
+    if not spec:
+        return {}
+    if "=" not in spec:
+        mods = [m.strip().lower() for m in spec.split(",") if m.strip()]
+        return {"*": mods} if mods else {}
+    out: dict[str, list[str]] = {}
+    for part in spec.split(";"):
+        part = part.strip()
+        if not part:
+            continue
+        if "=" not in part:
+            raise ValueError(f"--nonvisual 형식 오류: '{part}' (카테고리=modality 형태)")
+        cat, mods = part.split("=", 1)
+        out[cat.strip()] = [m.strip().lower() for m in mods.split(",") if m.strip()]
+    return out
+
+
+def modalities_for(spec_map: dict[str, list[str]], category: str) -> list[str]:
+    """해당 카테고리에 적용할 modality 목록 (없으면 빈 리스트 = 센서 큐 미적용)."""
+    if category in spec_map:
+        return spec_map[category]
+    return spec_map.get("*", [])
+
+
 def build_nonvisual_block(row, modalities: list[str], min_quality: str = "partial",
                           dedup: bool = False) -> str:
     """fused csv 행에서 선택된 modality의 큐 블록을 조립.

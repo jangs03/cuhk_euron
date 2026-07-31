@@ -51,10 +51,12 @@ def main():
                          "속도가 목적이면 --model ...-AWQ 체크포인트 권장")
     # ── non-visual 센서 큐 (fused csv 필요: *_nonvisual_fused_prompt.csv) ──
     ap.add_argument("--nonvisual", default="",
-                    help="프롬프트에 주입할 센서 큐. 쉼표 조합: imu / radar / skeleton "
-                         "(예: --nonvisual imu,skeleton). 빈 값이면 Visual only")
+                    help="프롬프트에 주입할 센서 큐. 전역: 'imu,skeleton' / "
+                         "카테고리별: 'emotion=imu,skeleton;multi=imu' "
+                         "(명시 안 된 카테고리는 미적용). 빈 값이면 Visual only")
     ap.add_argument("--nonvisual-categories", default="",
-                    help="센서 큐를 적용할 카테고리 (기본: 전체). 예: emotion,multi")
+                    help="전역 지정 시 적용할 카테고리 제한 (예: emotion,multi). "
+                         "카테고리별 지정을 쓰면 불필요")
     ap.add_argument("--nonvisual-min-quality", choices=["good", "partial", "poor"],
                     default="partial",
                     help="이 등급 미만인 modality는 프롬프트에서 제외 (기본 partial)")
@@ -88,17 +90,24 @@ def main():
     media_roots = [Path(r.strip()) for r in args.media_root.split(",") if r.strip()]
 
     # non-visual 설정: fused csv에 큐 컬럼이 있어야 함
-    nv_mods = [m.strip().lower() for m in args.nonvisual.split(",") if m.strip()]
+    from prompts import NONVISUAL_COLUMNS, modalities_for, parse_nonvisual_spec
+    nv_spec = parse_nonvisual_spec(args.nonvisual)
     nv_cats = {c.strip() for c in args.nonvisual_categories.split(",") if c.strip()}
-    if nv_mods:
-        from prompts import NONVISUAL_COLUMNS
-        missing = [NONVISUAL_COLUMNS[m][0] for m in nv_mods
+    if nv_spec:
+        used = {m for mods in nv_spec.values() for m in mods}
+        unknown = used - set(NONVISUAL_COLUMNS)
+        if unknown:
+            raise SystemExit(f"알 수 없는 modality: {sorted(unknown)} "
+                             f"(가능: {sorted(NONVISUAL_COLUMNS)})")
+        missing = [NONVISUAL_COLUMNS[m][0] for m in used
                    if NONVISUAL_COLUMNS[m][0] not in df.columns]
         if missing:
             raise SystemExit(
                 f"--nonvisual {args.nonvisual} 인데 컬럼이 없습니다: {missing}\n"
                 f"  → --qa 를 *_nonvisual_fused_prompt.csv 로 지정하세요")
-        print(f"nonvisual: {nv_mods} | quality>={args.nonvisual_min_quality}"
+        desc = ("; ".join(f"{k}={','.join(v)}" for k, v in nv_spec.items())
+                if list(nv_spec) != ["*"] else ",".join(nv_spec["*"]))
+        print(f"nonvisual: {desc} | quality>={args.nonvisual_min_quality}"
               f"{' | dedup' if args.nonvisual_dedup else ''}"
               f"{' | categories=' + str(sorted(nv_cats)) if nv_cats else ''}")
 
@@ -223,11 +232,13 @@ def main():
 
                 use_logits = args.decoding == "logits" and category != "sequence"
 
-                # non-visual 센서 큐 블록 (해당 카테고리에만 적용)
+                # non-visual 센서 큐 블록 (카테고리별로 다른 조합 가능)
                 nv_block = ""
-                if nv_mods and (not nv_cats or category in nv_cats):
-                    nv_block = build_nonvisual_block(
-                        row, nv_mods, args.nonvisual_min_quality, args.nonvisual_dedup)
+                if nv_spec and (not nv_cats or category in nv_cats):
+                    mods = modalities_for(nv_spec, category)
+                    if mods:
+                        nv_block = build_nonvisual_block(
+                            row, mods, args.nonvisual_min_quality, args.nonvisual_dedup)
 
                 if category == "multi" and args.multi_mode == "binary":
                     if use_logits:

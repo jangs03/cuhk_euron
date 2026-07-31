@@ -93,12 +93,40 @@ def main():
 
     # 카테고리별 최고 조합 — 카테고리 조건부 채택 판단용
     print("\n카테고리별 최고 조합 (조건부 적용 후보):")
+    winners, oracle = {}, []
     for c in cats:
         vals = {n: r[c] for n, r in results.items() if c in r.index}
         best = max(vals, key=vals.get)
+        winners[c] = best
+        oracle.append(vals[best])
         gain = vals[best] - base.get(c, 0)
         mark = "" if best == base_name else f"  (기준 대비 {gain:+.3f})"
         print(f"  {c:20s} {best:24s} {vals[best]:.3f}{mark}")
+
+    # 실험 이름에서 modality를 추론해 --nonvisual 스펙 문자열 생성
+    def mods_of(name: str) -> list[str] | None:
+        low = name.lower()
+        if "all" in low:
+            return ["imu", "radar", "skeleton"]
+        found = [m for m in ("imu", "radar", "skeleton") if m in low]
+        if found:
+            return found
+        return [] if ("only" in low or "visual" == low.strip()) else None
+
+    spec_parts = []
+    for c, name in winners.items():
+        mods = mods_of(name)
+        if mods is None:          # 이름에서 추론 불가 → 스펙 생략
+            spec_parts = None
+            break
+        if mods:
+            spec_parts.append(f"{c}={','.join(mods)}")
+    if spec_parts is not None:
+        spec = ";".join(spec_parts) if spec_parts else "(센서 큐 없음이 최적)"
+        print(f"\n카테고리 조건부 적용 명령:\n  --nonvisual \"{spec}\"")
+        print("  ※ 위 조합으로 전체 검증을 한 번 더 돌려 실제 이득을 확인하세요 "
+              f"(카테고리별 최고치 단순 합산 상한 {sum(oracle) / len(oracle):.4f}, "
+              "카테고리 크기가 달라 실제 전체 정확도와는 다릅니다)")
 
 
 if __name__ == "__main__":
