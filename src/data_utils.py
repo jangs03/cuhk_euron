@@ -294,13 +294,14 @@ def _stratified_motion_indices(frames: list[np.ndarray], n: int,
 def sample_frames(media_path: Path, n: int, colormap: bool = False,
                   max_side: int = 448, modality: str = "IR",
                   crop_person: bool = False, sampling: str = "uniform",
-                  return_pos: bool = False):
+                  return_pos: bool = False, ir_prep=None, ir_record=None):
     """미디어(파일 or 클립 디렉토리)에서 n프레임 샘플링 → PIL 리스트.
 
     sampling='uniform'    : 균등 간격 (기본)
     sampling='motion'     : 후보를 넉넉히(4n, 최소 32장) 읽은 뒤 모션 에너지 keyframe 선택
     sampling='stratified' : S1 — 4구간 층화 + 구간별 모션 상위 (sequence 타깃)
     return_pos=True       : (frames, 상대 위치 0~1 리스트) 튜플 반환 — 타임스탬프 계산용
+    ir_prep/ir_record     : IR 밝기 전처리기와 해당 클립 레코드 (선택된 프레임에만 적용)
     """
     n_read = n if sampling == "uniform" else max(4 * n, 32)
     if media_path.is_dir():
@@ -317,6 +318,10 @@ def sample_frames(media_path: Path, n: int, colormap: bool = False,
                else _stratified_motion_indices(raw, n))
         raw = [raw[i] for i in sel]
         pos = [pos[i] for i in sel]
+
+    # IR 밝기 보정: 샘플링으로 선택된 프레임에만 적용 (샘플링 전략은 건드리지 않음)
+    if ir_prep is not None and ir_record is not None:
+        raw = [ir_prep.apply(f, ir_record) for f in raw]
 
     if crop_person:
         raw = person_crop_frames(raw)

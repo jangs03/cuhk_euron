@@ -106,6 +106,7 @@ python src/run_baseline.py --qa data/test_qa.csv --out submission.csv \
 | `--nonvisual-min-quality` | `partial` | 이 등급 미만 modality는 제외 (poor 데이터 차단) |
 | `--nonvisual-dedup` | off | 센서 블록의 중복/무정보 문장 제거 (~7% 토큰 절감) |
 | `--max-side` | 448 | 프레임 리사이즈 긴 변 (해상도 실험: 448 → 672) |
+| `--ir-preprocess` | (없음) | IR 밝기 보정 manifest 경로 — 어두운 클립만 감마 보정 (아래 참고) |
 | `--option-prior` | (없음) | 보기 위치 편향 제거 (logits 전용). `check_option_bias.py` 출력을 붙여넣기 |
 
 ### Non-visual 센서 큐 ablation (6종 실험)
@@ -145,6 +146,23 @@ python src/compare_runs.py --gold data/train_nonvisual_fused_prompt.csv --markdo
 이 명령을 그대로 붙여 전체 검증을 한 번 더 돌려 실제 이득을 확인하세요.
 명시되지 않은 카테고리(single 등)는 센서 큐가 붙지 않아 토큰도 절약됩니다.
 `*=imu;emotion=imu,skeleton`처럼 기본값 + 예외 형태도 가능합니다.
+
+### IR 밝기 전처리 (`--ir-preprocess`)
+
+팀 공통 규격(`ir_gamma_v2`)의 사전 분석 결과를 읽어, **어두운 클립에만** 감마 보정을
+추론 시점에 적용합니다. 샘플링 전략은 그대로 두고 **선택된 프레임에만** 적용됩니다.
+
+```bash
+python src/run_baseline.py ... --ir-preprocess data/cache/ir_preprocess_manifest.csv
+```
+
+| 규칙 | 동작 |
+|---|---|
+| `global_state == normal` 또는 `gamma >= 1.0` | **원본 유지** (보정 안 함) |
+| 어두운 클립 | 감마 보정 + **밝은 영역 보호 마스크** (실측: 어두운 픽셀 +47, 밝은 픽셀 +1) |
+| manifest에 없는 클립 | 원본 사용 (부분 커버리지 허용) — 실행 후 적용률 출력 |
+
+필요 파일: `ir_preprocess_manifest.csv` (필수), `preprocess_config.json` (같은 폴더에 있으면 자동 사용)
 
 ### 보기 위치 편향 진단 (`check_option_bias.py`)
 

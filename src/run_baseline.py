@@ -67,6 +67,10 @@ def main():
                     help="센서 블록의 중복/무정보 문장 제거 (토큰 절약)")
     ap.add_argument("--max-side", type=int, default=448,
                     help="프레임 리사이즈 긴 변 픽셀 (해상도 실험용: 448 → 672 등)")
+    ap.add_argument("--ir-preprocess", default="",
+                    help="IR 밝기 전처리 manifest 경로 (ir_preprocess_manifest.csv). "
+                         "어두운 클립에만 팀 공통 감마 보정을 적용. "
+                         "manifest에 없는 클립은 원본 사용")
     ap.add_argument("--option-prior", default="",
                     help="보기 위치 편향 제거 (decoding=logits 전용). "
                          "예: 'A:0.31,B:0.24,C:0.23,D:0.22'. "
@@ -113,6 +117,13 @@ def main():
         print(f"nonvisual: {desc} | quality>={args.nonvisual_min_quality}"
               f"{' | dedup' if args.nonvisual_dedup else ''}"
               f"{' | categories=' + str(sorted(nv_cats)) if nv_cats else ''}")
+
+    ir_prep = None
+    if args.ir_preprocess:
+        from ir_preprocess import IRPreprocessor
+        ir_prep = IRPreprocessor(args.ir_preprocess)
+        print(f"IR 전처리: {len(ir_prep.by_key)}개 키 로드 "
+              f"(version={ir_prep.config.get('version')})")
 
     option_prior = None
     if args.option_prior:
@@ -210,10 +221,13 @@ def main():
                 n_frames = args.seq_frames if category == "sequence" else args.frames
                 # 샘플링은 완전 결정적(난수 없음) → 같은 클립·같은 인자면 항상 동일 프레임.
                 # non-visual ablation의 "동일 IR frames" 조건이 코드로 보장됨.
+                ir_record = (ir_prep.record_for(row["path"], args.modality)
+                             if ir_prep is not None else None)
                 frames, pos = data_utils.sample_frames(
                     media, n_frames, args.colormap, modality=args.modality,
                     crop_person=args.crop_person, sampling=sampling,
-                    max_side=args.max_side, return_pos=True)
+                    max_side=args.max_side, return_pos=True,
+                    ir_prep=ir_prep, ir_record=ir_record)
 
                 # 클립 길이/타임스탬프: 검증 결과 emotion(+5%p)·multi에만 도움이 되고
                 # single/sequence에는 노이즈였음 → 해당 카테고리에만 적용 (v4)
@@ -300,6 +314,8 @@ def main():
     if probs_f is not None:
         probs_f.close()
         print(f"probs → {probs_path}  (threshold 재튜닝: src/tune_yes_threshold.py)")
+    if ir_prep is not None:
+        print(ir_prep.coverage())
     print(f"done → {out_path}  (errors/fallbacks: {n_err})")
 
 
