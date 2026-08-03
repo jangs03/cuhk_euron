@@ -148,6 +148,20 @@ python src/compare_runs.py --gold data/train_nonvisual_fused_prompt.csv --markdo
 명시되지 않은 카테고리(single 등)는 센서 큐가 붙지 않아 토큰도 절약됩니다.
 `*=imu;emotion=imu,skeleton`처럼 기본값 + 예외 형태도 가능합니다.
 
+### IR 밝기 manifest 생성 (`analyze_ir.py`)
+
+클립별 밝기 통계를 분석해 적용할 감마를 미리 정한 표를 만듭니다. GPU 불필요.
+
+```bash
+python src/analyze_ir.py --roots data/HAU,data/HARn,data/large_model_track_test \
+    --out data/cache/ir_preprocess_manifest.csv --workers 4
+```
+
+- 약 4,120클립, `--workers 4`로 **10~20분** 예상
+- 중단돼도 다시 실행하면 이어서 진행 (resume), 200개마다 중간 저장
+- 팀원 노트북과 **동일한 계산식·동일한 컬럼**이라 결과를 합쳐 써도 됨
+- 끝나면 밝기 상태 분포와 "보정 적용 대상 비율"을 출력
+
 ### IR 밝기 전처리 (`--ir-preprocess`)
 
 팀 공통 규격(`ir_gamma_v2`)의 사전 분석 결과를 읽어, **어두운 클립에만** 감마 보정을
