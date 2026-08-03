@@ -173,7 +173,7 @@ def main():
     # 실제로 적용된 설정 — 플래그가 안 먹은 채 도는 사고를 눈으로 잡기 위해
     print(f"[cfg] decoding={args.decoding} tta={args.tta} frames={args.frames}"
           f"/seq{args.seq_frames} max_side={args.max_side} sampling={args.sampling}"
-          f" multi={args.multi_mode}"
+          f" multi={args.multi_mode} seq={args.seq_mode}"
           f"{' nonvisual=' + args.nonvisual if args.nonvisual else ''}"
           f"{' ir_preprocess=on' if args.ir_preprocess else ''}")
 
