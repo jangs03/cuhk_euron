@@ -37,28 +37,63 @@ IMAGE_INPUT_KEYS = ("pixel_values", "pixel_values_videos", "image_sizes",
                     "input_image_embeds", "image_patches", "images")
 
 
-def _load_backbone(model_name: str, kwargs: dict):
-    """모델 클래스 자동 선택 — Qwen2.5-VL / Qwen3-VL / InternVL 등을 --model만으로 교체.
+def _not_found(model_name: str):
+    raise SystemExit(
+        f"\n[vlm] 모델을 찾을 수 없습니다: {model_name}\n"
+        f"  HF에 없는 ID이거나 오타입니다. 사용 가능한 예:\n"
+        + "".join(f"    - {m}\n" for m in KNOWN_MODELS)
+        + "  ※ Qwen3-VL은 4B / 8B / 32B만 있습니다 (7B 없음)\n"
+    ) from None
 
-    최신 transformers의 범용 클래스를 먼저 시도하고, 아키텍처 미지원일 때만
-    Qwen2.5-VL 전용 클래스로 폴백한다 (구버전 transformers 호환).
-    모델 ID 자체가 없으면 폴백해도 같은 오류이므로 바로 안내하고 중단한다."""
+
+def _load_backbone(model_name: str, kwargs: dict):
+    """모델 클래스 자동 선택 — Qwen2.5-VL / Qwen3-VL 등을 --model만으로 교체.
+
+    체크포인트의 model_type을 먼저 읽어 아키텍처가 맞는 클래스로만 로드한다.
+    맞지 않는 클래스로 폴백하면 가중치가 0개 로드된 채 조용히 돌아가므로
+    (InternVL 체크포인트를 Qwen 클래스에 넣는 사고) 그런 폴백은 하지 않는다."""
+    trc = bool(kwargs.get("trust_remote_code", False))
+    from transformers import AutoConfig
     try:
-        from transformers import AutoModelForImageTextToText
-        return AutoModelForImageTextToText.from_pretrained(model_name, **kwargs)
+        cfg = AutoConfig.from_pretrained(model_name, trust_remote_code=trc)
     except Exception as e:
         msg = str(e)
         if "is not a local folder" in msg or "Repository Not Found" in msg:
+            _not_found(model_name)
+        raise
+    ckpt_type = (getattr(cfg, "model_type", "") or "").lower()
+
+    model = None
+    try:
+        from transformers import AutoModelForImageTextToText
+        model = AutoModelForImageTextToText.from_pretrained(model_name, **kwargs)
+    except Exception as e:
+        print(f"[vlm] 범용 로더 실패({type(e).__name__}: {str(e)[:120]})")
+        if ckpt_type.startswith("qwen"):        # 같은 계열일 때만 전용 클래스 폴백
+            from transformers import Qwen2_5_VLForConditionalGeneration
+            kwargs.pop("trust_remote_code", None)
+            model = Qwen2_5_VLForConditionalGeneration.from_pretrained(
+                model_name, **kwargs)
+        elif trc:                                # 커스텀 아키텍처는 AutoModel로
+            from transformers import AutoModel
+            model = AutoModel.from_pretrained(model_name, **kwargs)
+        else:
             raise SystemExit(
-                f"\n[vlm] 모델을 찾을 수 없습니다: {model_name}\n"
-                f"  HF에 없는 ID이거나 오타입니다. 사용 가능한 예:\n"
-                + "".join(f"    - {m}\n" for m in KNOWN_MODELS)
-                + "  ※ Qwen3-VL은 4B / 8B / 32B만 있습니다 (7B 없음)\n"
+                f"\n[vlm] {model_name} (model_type={ckpt_type}) 를 로드할 수 없습니다.\n"
+                f"  현재 transformers가 이 아키텍처를 지원하지 않습니다.\n"
+                f"  해결: pip install -U transformers 후 재시도, 또는 다른 모델 사용\n"
             ) from None
-        print(f"[vlm] 범용 로더 실패({type(e).__name__}) → Qwen2.5-VL 클래스로 재시도")
-        from transformers import Qwen2_5_VLForConditionalGeneration
-        kwargs.pop("trust_remote_code", None)
-        return Qwen2_5_VLForConditionalGeneration.from_pretrained(model_name, **kwargs)
+
+    # 아키텍처 불일치 검증 — 다른 클래스로 로드되면 가중치가 실리지 않는다
+    loaded_type = (getattr(getattr(model, "config", None), "model_type", "") or "").lower()
+    if ckpt_type and loaded_type and ckpt_type != loaded_type:
+        raise SystemExit(
+            f"\n[vlm] 아키텍처 불일치 — 이 모델은 이 파이프라인에서 쓸 수 없습니다.\n"
+            f"  체크포인트: {ckpt_type}  →  로드된 클래스: {loaded_type}\n"
+            f"  가중치가 로드되지 않아 무작위 출력이 나옵니다 (점수 무의미).\n"
+            f"  해결: pip install -U transformers 로 지원 여부 확인, 또는 전용 어댑터 필요\n"
+        )
+    return model
 
 
 class QwenVLM:
