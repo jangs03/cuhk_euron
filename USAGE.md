@@ -199,9 +199,15 @@ python src/check_option_bias.py --probs val_visual.csv.probs.csv \
 | **`Qwen/Qwen3-VL-8B-Instruct`** | 8B | Qwen2.5-VL의 직계 후속, 비디오 이해 대폭 향상 | **1순위 시도** |
 | `Qwen/Qwen3-VL-32B-Instruct` | 32B | 상용 모델급 성능 | A100 필요(+`--quant 4bit`) |
 | `Qwen/Qwen3-VL-4B-Instruct` | 4B | T4에서도 여유 | 저사양용 |
-| `OpenGVLab/InternVL3_5-8B` | 8B | **다른 계열**(InternViT) — 앙상블 다양성 최대 | trust_remote_code 자동 |
-| `microsoft/Phi-4-multimodal-instruct` | 5.6B | MS 계열, 가볍고 빠름 | trust_remote_code 자동, **이미지 규약 확인 필요** |
+| `llava-hf/llava-onevision-qwen2-7b-ov-hf` | 7B | **다중 이미지·비디오 특화**, SigLIP 인코더 | ~16GB |
+| `google/gemma-3-12b-it` | 12B | **다른 계열**(Google) — 앙상블 다양성 최대 | ~24GB, HF 라이선스 동의 필요 |
+| `google/gemma-3-4b-it` | 4B | 위의 경량판 | ~10GB |
 | `Qwen/Qwen2.5-VL-7B-Instruct-AWQ` | 7B | 4bit, 속도 ~2배·VRAM 1/3 | `pip install autoawq` |
+
+❌ **쓸 수 없는 모델**: InternVL(`internvl_chat`), Phi-4-multimodal(`phi4mm`)은 표준 chat
+template 대신 자체 인터페이스(`model.chat()`, `<|image_N|>` 규약)를 써서 이 파이프라인과
+맞지 않습니다. 억지로 로드하면 **가중치 0개로 실려 무작위 출력**이 나오므로 로더가 중단시킵니다.
+쓰려면 모델별 전용 어댑터가 필요합니다.
 
 ⚠️ **Qwen3-VL은 4B / 8B / 32B만 존재합니다 (7B 없음).** 없는 ID를 주면 즉시 안내 후 중단됩니다.
 

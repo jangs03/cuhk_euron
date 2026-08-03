@@ -20,13 +20,16 @@ def _attn_implementation() -> str:
     return "sdpa"
 
 
+# 표준 chat template + 다중 이미지를 지원해 이 파이프라인에서 그대로 동작하는 모델들.
+# (InternVL·Phi-4는 자체 인터페이스라 전용 어댑터 없이는 쓸 수 없어 제외했다)
 KNOWN_MODELS = [
     "Qwen/Qwen2.5-VL-3B-Instruct", "Qwen/Qwen2.5-VL-7B-Instruct",
     "Qwen/Qwen2.5-VL-7B-Instruct-AWQ",
     "Qwen/Qwen3-VL-4B-Instruct", "Qwen/Qwen3-VL-8B-Instruct",
     "Qwen/Qwen3-VL-32B-Instruct",
-    "OpenGVLab/InternVL3_5-8B", "OpenGVLab/InternVL3-8B",
-    "microsoft/Phi-4-multimodal-instruct",
+    "llava-hf/llava-onevision-qwen2-7b-ov-hf",   # 다중 이미지·비디오 특화
+    "llava-hf/LLaVA-NeXT-Video-7B-hf",
+    "google/gemma-3-4b-it", "google/gemma-3-12b-it",  # 다른 계열 (라이선스 동의 필요)
 ]
 
 # 저장소 코드 실행이 필요한 공식 저장소 (--trust-remote-code 없이도 자동 허용)
