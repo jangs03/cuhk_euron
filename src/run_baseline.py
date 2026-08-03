@@ -12,8 +12,10 @@
 import argparse
 import csv
 import math
+import random
 import sys
 import traceback
+from collections import Counter
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).parent))
@@ -25,6 +27,25 @@ import config
 import data_utils
 from parse_answer import parse_answer, parse_yes_no
 from prompts import build_binary_prompt, build_nonvisual_block, build_prompt
+
+
+def option_permutations(letters: list[str], k: int, seed: int) -> list[list[str]]:
+    """원본 + (k-1)개 서로 다른 보기 순열.
+
+    반환값 perm에서 perm[i]는 '표시 위치 letters[i]에 놓일 원본 보기 글자'.
+    예) letters=[A,B,C], perm=[C,A,B] → 화면의 A에는 원본 C의 내용이 표시됨.
+    """
+    perms, seen = [list(letters)], {tuple(letters)}
+    rng = random.Random(seed)
+    for _ in range(50):
+        if len(perms) >= k:
+            break
+        cand = list(letters)
+        rng.shuffle(cand)
+        if tuple(cand) not in seen:
+            seen.add(tuple(cand))
+            perms.append(cand)
+    return perms
 
 
 def main():
@@ -75,6 +96,10 @@ def main():
                     help="보기 위치 편향 제거 (decoding=logits 전용). "
                          "예: 'A:0.31,B:0.24,C:0.23,D:0.22'. "
                          "src/check_option_bias.py 출력값을 그대로 붙여넣으면 됨")
+    ap.add_argument("--tta", type=int, default=1, metavar="K",
+                    help="보기 순서 순열 TTA — 원본 포함 K회 추론 후 집계 (1=끄기). "
+                         "위치 편향을 구조적으로 상쇄. single류=확률 평균, "
+                         "sequence=다수결. multi(binary)는 순서 무관이라 적용 안 함")
     ap.add_argument("--crop-person", action="store_true",
                     help="배경 차분으로 사람 활동 영역만 crop (고정 카메라 가정, "
                          "캐시 프레임에도 즉석 적용 가능) — v5 검증에서 성능 하락, 비권장")
@@ -288,17 +313,38 @@ def main():
                                                category, letters)
                 elif use_logits:
                     # single류: 보기 글자 토큰의 로그확률 직접 비교 (생성/파싱 노이즈 제거)
-                    prompt = build_prompt(str(row["question"]), options, category,
-                                          duration, nv_block)
-                    lp = model.option_logprobs(frames, prompt, letters, times,
-                                               prior=option_prior)
-                    z = max(lp.values())
-                    total = sum(math.exp(v - z) for v in lp.values())
-                    for L in letters:
+                    # TTA: 보기 순서를 섞어 여러 번 추론 후 원본 글자 기준으로 확률 평균
+                    perms = option_permutations(letters, args.tta, hash(qa_id) & 0xFFFF)
+                    agg = {L: 0.0 for L in letters}
+                    for perm in perms:
+                        shown = {letters[i]: options[perm[i]] for i in range(len(letters))}
+                        prompt = build_prompt(str(row["question"]), shown, category,
+                                              duration, nv_block)
+                        lp = model.option_logprobs(frames, prompt, letters, times,
+                                                   prior=option_prior)
+                        z = max(lp.values())
+                        tot = sum(math.exp(v - z) for v in lp.values())
+                        for i, L in enumerate(letters):       # 표시 글자 → 원본 글자
+                            agg[perm[i]] += math.exp(lp[L] - z) / tot
+                    for L in letters:                          # 순열 평균 확률 기록
                         probs_writer.writerow(
-                            [qa_id, category, L, f"{math.exp(lp[L] - z) / total:.4f}"])
+                            [qa_id, category, L, f"{agg[L] / len(perms):.4f}"])
                     probs_f.flush()
-                    ans = max(lp, key=lp.get)
+                    ans = max(agg, key=agg.get)
+                elif category == "sequence" and args.tta > 1:
+                    # sequence: 순열마다 생성 → 원본 글자로 되돌린 뒤 다수결
+                    votes = []
+                    for perm in option_permutations(letters, args.tta,
+                                                    hash(qa_id) & 0xFFFF):
+                        shown = {letters[i]: options[perm[i]] for i in range(len(letters))}
+                        prompt = build_prompt(str(row["question"]), shown, category,
+                                              duration, nv_block)
+                        raw_ans = parse_answer(model.answer(frames, prompt, times),
+                                               category, letters)
+                        back = "".join(perm[letters.index(ch)] for ch in raw_ans
+                                       if ch in letters)
+                        votes.append(parse_answer(back, category, letters))
+                    ans = Counter(votes).most_common(1)[0][0]
                 else:
                     prompt = build_prompt(str(row["question"]), options, category,
                                           duration, nv_block)

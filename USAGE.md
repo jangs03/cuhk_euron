@@ -100,6 +100,7 @@ python src/run_baseline.py --qa data/test_qa.csv --out submission.csv \
 | `--category` | (없음) | 쉼표로 카테고리 필터 — 빠른 검증용. 예: `--category sequence` (45문항, ~1분) |
 | `--decoding` | `generate` | `logits`=자유 생성 대신 로그확률로 답 선택 (single류=글자 확률 비교, multi=P(YES)+threshold, sequence는 항상 generate). 보기별 확률이 `<out>.probs.csv`에 저장됨 |
 | `--yes-threshold` | 0.5 | logits 디코딩에서 multi의 P(YES) 채택 기준 |
+| `--tta K` | 1 | **보기 순서 순열 TTA** — 원본 포함 K회 추론 후 집계. 위치 편향을 구조적으로 상쇄 (single류=확률 평균, sequence=다수결, multi(binary)는 순서 무관이라 미적용). 추론 K배 |
 | `--quant` | `none` | `4bit`/`8bit` = bitsandbytes 양자화 (VRAM 절감용). 속도 목적이면 아래 AWQ 권장 |
 | `--nonvisual` | (없음) | 센서 큐 지정. 전역 `imu,skeleton` 또는 **카테고리별** `emotion=imu,skeleton;multi=imu`. **`--qa`를 fused csv로 지정해야 함** |
 | `--nonvisual-categories` | 전체 | 전역 지정 시 적용 카테고리 제한 (카테고리별 지정을 쓰면 불필요) |
