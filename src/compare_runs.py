@@ -46,12 +46,15 @@ def main():
     ap.add_argument("--runs", nargs="+", required=True,
                     help='"이름=경로.csv" 형식. 첫 번째가 기준선')
     ap.add_argument("--markdown", action="store_true", help="노션용 마크다운 표로 출력")
+    ap.add_argument("--all-rows", action="store_true",
+                    help="문항 수가 달라도 각자 전체로 채점 (기본: 공통 문항으로만 비교)")
     args = ap.parse_args()
 
     gold = pd.read_csv(args.gold, dtype=str, keep_default_na=False)
     gold = gold[["qa_id", "category", "answer"]]
 
-    results, counts = {}, {}
+    # 실행별 qa_id 수집 — 중단된 실행이 섞이면 비교가 왜곡되므로 먼저 확인
+    loaded = {}
     for spec in args.runs:
         if "=" not in spec:
             raise SystemExit(f'--runs 형식 오류: "{spec}" (이름=경로.csv)')
@@ -59,6 +62,29 @@ def main():
         if not Path(path).exists():
             print(f"⚠️  건너뜀 (파일 없음): {name} → {path}")
             continue
+        ids = set(pd.read_csv(path, dtype=str)["qa_id"])
+        loaded[name] = (path, ids)
+
+    if not loaded:
+        raise SystemExit("채점할 결과가 없습니다")
+
+    sizes = {n: len(i) for n, (_, i) in loaded.items()}
+    if len(set(sizes.values())) > 1:
+        biggest = max(sizes.values())
+        print("⚠️  문항 수가 다릅니다 (중단된 실행이 있을 수 있음):")
+        for n, s in sizes.items():
+            flag = "" if s == biggest else "  ← 미완료"
+            print(f"     {n:28s} {s:>5}문항{flag}")
+        if not args.all_rows:
+            common = set.intersection(*(i for _, i in loaded.values()))
+            print(f"   → 공통 {len(common)}문항으로만 비교합니다 "
+                  f"(전체로 보려면 --all-rows)\n")
+            gold = gold[gold["qa_id"].isin(common)]
+        else:
+            print("   → --all-rows: 각자 전체로 채점 (직접 비교는 부정확할 수 있음)\n")
+
+    results, counts = {}, {}
+    for name, (path, _ids) in loaded.items():
         by_cat, overall, n = score(path, gold)
         results[name] = by_cat
         counts[name] = (overall, n)
