@@ -100,7 +100,7 @@ python src/run_baseline.py --qa data/test_qa.csv --out submission.csv \
 | `--category` | (없음) | 쉼표로 카테고리 필터 — 빠른 검증용. 예: `--category sequence` (45문항, ~1분) |
 | `--decoding` | `generate` | `logits`=자유 생성 대신 로그확률로 답 선택 (single류=글자 확률 비교, multi=P(YES)+threshold, sequence는 항상 generate). 보기별 확률이 `<out>.probs.csv`에 저장됨 |
 | `--yes-threshold` | 0.5 | logits 디코딩에서 multi의 P(YES) 채택 기준 |
-| `--seq-mode` | `score` | sequence 답 결정: `score`=가능한 순열 전부 로그확률 채점(**파싱 실패 없음**, 문항당 24회 forward), `generate`=자유 생성 후 파싱 |
+| `--seq-mode` | `stepwise` | sequence 답 결정 (아래 표 참고) |
 | `--tta K` | 1 | **보기 순서 순열 TTA** — 원본 포함 K회 추론 후 집계. 위치 편향을 구조적으로 상쇄 (single류=확률 평균, sequence=다수결, multi(binary)는 순서 무관이라 미적용). 추론 K배 |
 | `--quant` | `none` | `4bit`/`8bit` = bitsandbytes 양자화 (VRAM 절감용). 속도 목적이면 아래 AWQ 권장 |
 | `--nonvisual` | (없음) | 센서 큐 지정. 전역 `imu,skeleton` 또는 **카테고리별** `emotion=imu,skeleton;multi=imu`. **`--qa`를 fused csv로 지정해야 함** |
@@ -179,6 +179,20 @@ python src/run_baseline.py ... --ir-preprocess data/cache/ir_preprocess_manifest
 | manifest에 없는 클립 | 원본 사용 (부분 커버리지 허용) — 실행 후 적용률 출력 |
 
 필요 파일: `ir_preprocess_manifest.csv` (필수), `preprocess_config.json` (같은 폴더에 있으면 자동 사용)
+
+### sequence 답 결정 방식 (`--seq-mode`)
+
+| 모드 | 방식 | forward/문항 | 파싱 실패 |
+|---|---|---|---|
+| **`stepwise`** (기본) | "남은 보기 중 **가장 먼저** 일어난 것"을 3번 질의해 순서를 세움 | **3** | 없음 |
+| `score` | 가능한 순열 24개를 전부 로그확률 채점 | 24 | 없음 |
+| `generate` | 자유 생성 후 텍스트 파싱 (구버전) | 1 | **있음** |
+
+`generate`는 모델이 `ANSWER: DBCA` 형식을 안 지키면 fallback으로 `ABCD`가 채워져
+**무작위 수준(1/24 = 0.042)으로 붕괴**합니다. 실제로 LLaVA-OneVision이 0.044를 기록했습니다.
+
+`stepwise`는 매 단계가 single류와 같은 단일 선택이라 기존 로짓 비교를 그대로 쓰고,
+**항상 유효한 순열**이 나오며, `score` 대비 **8배 빠릅니다**.
 
 ### 카테고리 라우팅 (`route_predictions.py`)
 

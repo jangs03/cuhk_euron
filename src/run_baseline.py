@@ -28,7 +28,8 @@ from tqdm import tqdm
 import config
 import data_utils
 from parse_answer import parse_answer, parse_yes_no
-from prompts import build_binary_prompt, build_nonvisual_block, build_prompt
+from prompts import (build_binary_prompt, build_nonvisual_block, build_prompt,
+                     build_sequence_step_prompt)
 
 
 # 결과에 영향을 주는 설정 — resume 시 이전 실행과 다르면 중단한다.
@@ -135,9 +136,12 @@ def main():
                     help="보기 위치 편향 제거 (decoding=logits 전용). "
                          "예: 'A:0.31,B:0.24,C:0.23,D:0.22'. "
                          "src/check_option_bias.py 출력값을 그대로 붙여넣으면 됨")
-    ap.add_argument("--seq-mode", choices=["score", "generate"], default="score",
-                    help="sequence 답 결정: score=가능한 순열 전부 로그확률 채점(파싱 실패 없음), "
-                         "generate=자유 생성 후 파싱(구버전). score는 문항당 24회 forward")
+    ap.add_argument("--seq-mode", choices=["stepwise", "score", "generate"],
+                    default="stepwise",
+                    help="sequence 답 결정 방식. "
+                         "stepwise='가장 먼저 일어난 것'을 3번 물어 순서를 세움(권장, 3 forward) / "
+                         "score=24개 순열 전부 채점(정확하나 24 forward) / "
+                         "generate=자유 생성 후 파싱(형식 미준수 시 무작위로 붕괴)")
     ap.add_argument("--tta", type=int, default=1, metavar="K",
                     help="보기 순서 순열 TTA — 원본 포함 K회 추론 후 집계 (1=끄기). "
                          "위치 편향을 구조적으로 상쇄. single류=확률 평균, "
@@ -328,8 +332,9 @@ def main():
                         times = [p * duration for p in pos]
 
                 use_logits = args.decoding == "logits" and category != "sequence"
-                seq_score = (category == "sequence" and args.decoding == "logits"
-                             and args.seq_mode == "score")
+                is_seq = category == "sequence" and args.decoding == "logits"
+                seq_score = is_seq and args.seq_mode == "score"
+                seq_step = is_seq and args.seq_mode == "stepwise"
 
                 # non-visual 센서 큐 블록 (카테고리별로 다른 조합 가능)
                 nv_block = ""
@@ -387,6 +392,27 @@ def main():
                             [qa_id, category, L, f"{agg[L] / len(perms):.4f}"])
                     probs_f.flush()
                     ans = max(agg, key=agg.get)
+                elif seq_step:
+                    # sequence: "남은 것 중 가장 먼저"를 반복해 순서를 세운다 (3 forward)
+                    remaining, placed, texts = list(letters), [], []
+                    while len(remaining) > 1:
+                        prompt = build_sequence_step_prompt(
+                            str(row["question"]),
+                            {L: options[L] for L in remaining}, texts, nv_block)
+                        lp = model.option_logprobs(frames, prompt, remaining, times,
+                                                   prior=option_prior)
+                        pick = max(lp, key=lp.get)
+                        z = max(lp.values())
+                        tot = sum(math.exp(v - z) for v in lp.values())
+                        probs_writer.writerow(
+                            [qa_id, category, f"step{len(placed) + 1}:{pick}",
+                             f"{math.exp(lp[pick] - z) / tot:.4f}"])
+                        placed.append(pick)
+                        texts.append(options[pick])
+                        remaining.remove(pick)
+                    placed += remaining              # 마지막 하나는 자동 결정
+                    probs_f.flush()
+                    ans = "".join(placed)
                 elif seq_score:
                     # sequence: 가능한 순열을 전부 채점해 최댓값 선택 (파싱 불필요)
                     prompt = build_prompt(str(row["question"]), options, category,

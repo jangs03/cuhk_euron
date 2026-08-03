@@ -71,6 +71,31 @@ def build_prompt(question: str, options: dict, category: str,
     )
 
 
+def build_sequence_step_prompt(question: str, remaining: dict,
+                               placed: list[str], nonvisual: str = "") -> str:
+    """sequence 단계별 질의 — 남은 보기 중 '가장 먼저 일어난 것' 하나를 고른다.
+
+    4개 순열(24가지)을 통째로 채점하는 대신 3번의 단일 선택으로 순서를 세운다.
+    한 번에 4개를 나열하게 하는 것보다 질문이 단순하고, 매 단계가 single류와
+    같은 형태라 로짓 비교를 그대로 쓸 수 있다 (파싱 불필요, 항상 유효한 순열).
+    """
+    opts_text = "\n".join(f"{k}. {v}" for k, v in remaining.items())
+    nv = f"{nonvisual}\n\n" if nonvisual else ""
+    done = ""
+    if placed:
+        done = ("Already determined order so far: "
+                + " -> ".join(placed) + "\n\n")
+    return (
+        f"{nv}"
+        f"Question: {question}\n\n"
+        f"{done}"
+        f"Remaining options:\n{opts_text}\n\n"
+        "Among the REMAINING options above, which one happens EARLIEST in the video? "
+        "The frames are in temporal order. "
+        "Reply with exactly one letter, e.g. 'ANSWER: B'."
+    )
+
+
 def build_binary_prompt(action: str, duration: float | None = None,
                         nonvisual: str = "") -> str:
     """multi 이진 분해용: 보기 하나가 영상에 등장하는지 yes/no로 묻는다."""
