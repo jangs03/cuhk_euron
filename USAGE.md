@@ -185,11 +185,17 @@ python src/check_option_bias.py --probs val_visual.csv.probs.csv \
 | **`Qwen/Qwen3-VL-8B-Instruct`** | 8B | Qwen2.5-VL의 직계 후속, 비디오 이해 대폭 향상 | **1순위 시도** |
 | `Qwen/Qwen3-VL-32B-Instruct` | 32B | 상용 모델급 성능 | A100 필요(+`--quant 4bit`) |
 | `Qwen/Qwen3-VL-4B-Instruct` | 4B | T4에서도 여유 | 저사양용 |
-| `OpenGVLab/InternVL3_5-8B` | 8B | **다른 계열**(InternViT) — 앙상블 다양성 최대 | `--trust-remote-code` 필요할 수 있음 |
+| `OpenGVLab/InternVL3_5-8B` | 8B | **다른 계열**(InternViT) — 앙상블 다양성 최대 | trust_remote_code 자동 |
+| `microsoft/Phi-4-multimodal-instruct` | 5.6B | MS 계열, 가볍고 빠름 | trust_remote_code 자동, **이미지 규약 확인 필요** |
 | `Qwen/Qwen2.5-VL-7B-Instruct-AWQ` | 7B | 4bit, 속도 ~2배·VRAM 1/3 | `pip install autoawq` |
 
-> 새 모델을 처음 돌릴 땐 `--limit 20`으로 로드·출력 형식부터 확인하세요.
-> 로드 시 `[vlm] <모델> | <클래스> | dtype=... | attn=...` 로그로 실제 적용 상태를 알 수 있습니다.
+⚠️ **Qwen3-VL은 4B / 8B / 32B만 존재합니다 (7B 없음).** 없는 ID를 주면 즉시 안내 후 중단됩니다.
+
+**새 모델 첫 실행 시 반드시**: `--limit 5`로 먼저 확인하세요. 로드 로그
+`[vlm] <모델> | <클래스> | dtype=... | attn=...`가 뜨고, 프레임이 실제로 모델에 전달되는지
+자동 검사됩니다. 모델별 이미지 플레이스홀더 규약이 달라 **영상이 조용히 무시되면 점수가
+왜곡**되므로, 그 경우 명시적으로 중단하고 전용 어댑터가 필요하다고 알려줍니다.
+InternVL·Phi 계열은 저장소 코드 실행이 필요해 공식 저장소에 한해 자동 허용됩니다.
 
 **속도 최적화 가이드** (효과 순, 조합 가능):
 

@@ -20,15 +20,41 @@ def _attn_implementation() -> str:
     return "sdpa"
 
 
+KNOWN_MODELS = [
+    "Qwen/Qwen2.5-VL-3B-Instruct", "Qwen/Qwen2.5-VL-7B-Instruct",
+    "Qwen/Qwen2.5-VL-7B-Instruct-AWQ",
+    "Qwen/Qwen3-VL-4B-Instruct", "Qwen/Qwen3-VL-8B-Instruct",
+    "Qwen/Qwen3-VL-32B-Instruct",
+    "OpenGVLab/InternVL3_5-8B", "OpenGVLab/InternVL3-8B",
+    "microsoft/Phi-4-multimodal-instruct",
+]
+
+# 저장소 코드 실행이 필요한 공식 저장소 (--trust-remote-code 없이도 자동 허용)
+AUTO_TRUST_PREFIXES = ("OpenGVLab/", "microsoft/Phi-")
+
+# 프로세서 출력에서 '이미지가 실제로 들어갔는지' 판별할 키들
+IMAGE_INPUT_KEYS = ("pixel_values", "pixel_values_videos", "image_sizes",
+                    "input_image_embeds", "image_patches", "images")
+
+
 def _load_backbone(model_name: str, kwargs: dict):
     """모델 클래스 자동 선택 — Qwen2.5-VL / Qwen3-VL / InternVL 등을 --model만으로 교체.
 
-    최신 transformers의 범용 클래스를 먼저 시도하고, 실패 시 Qwen2.5-VL 전용
-    클래스로 폴백한다 (구버전 transformers 호환)."""
+    최신 transformers의 범용 클래스를 먼저 시도하고, 아키텍처 미지원일 때만
+    Qwen2.5-VL 전용 클래스로 폴백한다 (구버전 transformers 호환).
+    모델 ID 자체가 없으면 폴백해도 같은 오류이므로 바로 안내하고 중단한다."""
     try:
         from transformers import AutoModelForImageTextToText
         return AutoModelForImageTextToText.from_pretrained(model_name, **kwargs)
     except Exception as e:
+        msg = str(e)
+        if "is not a local folder" in msg or "Repository Not Found" in msg:
+            raise SystemExit(
+                f"\n[vlm] 모델을 찾을 수 없습니다: {model_name}\n"
+                f"  HF에 없는 ID이거나 오타입니다. 사용 가능한 예:\n"
+                + "".join(f"    - {m}\n" for m in KNOWN_MODELS)
+                + "  ※ Qwen3-VL은 4B / 8B / 32B만 있습니다 (7B 없음)\n"
+            ) from None
         print(f"[vlm] 범용 로더 실패({type(e).__name__}) → Qwen2.5-VL 클래스로 재시도")
         from transformers import Qwen2_5_VLForConditionalGeneration
         kwargs.pop("trust_remote_code", None)
@@ -72,12 +98,18 @@ class QwenVLM:
             else:
                 kwargs["quantization_config"] = BitsAndBytesConfig(load_in_8bit=True)
 
+        # InternVL·Phi 계열은 저장소 코드가 있어야 로드됨 (공식 저장소만 자동 허용)
+        if not trust_remote_code and model_name.startswith(AUTO_TRUST_PREFIXES):
+            print(f"[vlm] {model_name}: 공식 저장소이므로 trust_remote_code 자동 활성화")
+            trust_remote_code = True
         if trust_remote_code:
             kwargs["trust_remote_code"] = True
 
         self.model = _load_backbone(model_name, kwargs)
         self.processor = AutoProcessor.from_pretrained(
             model_name, trust_remote_code=trust_remote_code)
+        self.model_name = model_name
+        self._image_check_done = False       # 첫 호출에서 이미지 입력 여부 1회 검사
         print(f"[vlm] {model_name} | {type(self.model).__name__}"
               f" | dtype={dtype} | attn={kwargs['attn_implementation']}"
               f" | quant={quant or ('awq' if 'awq' in model_name.lower() else 'none')}")
@@ -102,9 +134,20 @@ class QwenVLM:
         text = self.processor.apply_chat_template(
             messages, tokenize=False, add_generation_prompt=True
         ) + assistant_prefix
-        return self.processor(
-            text=[text], images=frames, return_tensors="pt"
-        ).to(self.model.device)
+        inputs = self.processor(text=[text], images=frames, return_tensors="pt")
+
+        # 모델마다 이미지 플레이스홀더 규약이 달라(예: Phi-4의 <|image_N|>) 프레임이
+        # 조용히 무시될 수 있다. 그 경우 점수가 조용히 망가지므로 명시적으로 실패시킨다.
+        if not self._image_check_done:
+            if not any(k in inputs for k in IMAGE_INPUT_KEYS):
+                raise SystemExit(
+                    f"\n[vlm] {self.model_name}: 프로세서 출력에 이미지 입력이 없습니다.\n"
+                    f"  받은 키: {sorted(inputs.keys())}\n"
+                    f"  이 모델은 chat template의 이미지 규약이 달라 전용 어댑터가 필요합니다.\n"
+                    f"  (이대로 두면 모델이 영상을 못 보고 텍스트만으로 답해 점수가 왜곡됩니다)\n"
+                )
+            self._image_check_done = True
+        return inputs.to(self.model.device)
 
     @torch.inference_mode()
     def answer(self, frames, prompt: str, times: list[float] | None = None) -> str:
