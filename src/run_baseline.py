@@ -11,6 +11,7 @@
 """
 import argparse
 import csv
+import json
 import math
 import random
 import sys
@@ -27,6 +28,43 @@ import config
 import data_utils
 from parse_answer import parse_answer, parse_yes_no
 from prompts import build_binary_prompt, build_nonvisual_block, build_prompt
+
+
+# 결과에 영향을 주는 설정 — resume 시 이전 실행과 다르면 중단한다.
+# (같은 --out에 다른 설정으로 이어 쓰면 옛 답이 그대로 재사용되어 실험이 조용히 무효가 됨)
+RESUME_KEYS = ["model", "modality", "decoding", "tta", "max_side", "frames",
+               "seq_frames", "sampling", "multi_mode", "yes_threshold",
+               "option_prior", "nonvisual", "nonvisual_categories",
+               "nonvisual_min_quality", "nonvisual_dedup", "crop_person",
+               "colormap", "ir_preprocess", "ir_manifest_rows"]
+
+
+def check_resume_config(out_path: Path, args, ir_rows: int | None) -> Path:
+    """이전 실행과 설정이 같은지 확인하고 meta 파일을 갱신."""
+    meta_path = out_path.with_suffix(out_path.suffix + ".meta.json")
+    cur = {k: getattr(args, k, None) for k in RESUME_KEYS if k != "ir_manifest_rows"}
+    cur["ir_manifest_rows"] = ir_rows
+
+    if out_path.exists() and meta_path.exists():
+        prev = json.loads(meta_path.read_text(encoding="utf-8"))
+        diff = {k: (prev.get(k), cur[k]) for k in cur if prev.get(k) != cur[k]}
+        if diff and not args.allow_config_change:
+            lines = "".join(f"    {k}: {old!r} → {new!r}\n"
+                            for k, (old, new) in sorted(diff.items()))
+            raise SystemExit(
+                f"\n[중단] 이 출력 파일은 다른 설정으로 만들어졌습니다: {out_path}\n"
+                f"{lines}"
+                f"  그대로 이어서 쓰면 옛 답이 재사용되어 새 설정이 반영되지 않습니다.\n"
+                f"  해결: EXP 태그를 바꾸거나(권장) 기존 파일을 지우세요.\n"
+                f"        의도한 것이라면 --allow-config-change 를 붙이세요.\n")
+    elif out_path.exists():
+        print("주의: 이전 실행의 설정 기록이 없어 일치 여부를 확인할 수 없습니다 "
+              "(설정을 바꿨다면 EXP 태그를 변경하세요)")
+
+    meta_path.parent.mkdir(parents=True, exist_ok=True)
+    meta_path.write_text(json.dumps(cur, ensure_ascii=False, indent=2),
+                         encoding="utf-8")
+    return meta_path
 
 
 def option_permutations(letters: list[str], k: int, seed: int) -> list[list[str]]:
@@ -114,6 +152,9 @@ def main():
     ap.add_argument("--modality", default="IR",
                     help="IR / Depth_Color / Depth / Thermal (없으면 선호 순서로 fallback). "
                          "실데이터 확인 결과 IR이 가장 선명해서 기본값.")
+    ap.add_argument("--allow-config-change", action="store_true",
+                    help="설정이 바뀌었어도 기존 출력 파일에 이어서 쓰기 "
+                         "(기본은 중단 — 옛 답 재사용으로 실험이 무효가 되는 것 방지)")
     ap.add_argument("--limit", type=int, default=0, help="앞에서 N개만 (디버그용)")
     ap.add_argument("--val-users", default="", help="예: 9,24 — 이 user들 행만 추론")
     args = ap.parse_args()
@@ -169,8 +210,10 @@ def main():
     if args.limit:
         df = df.head(args.limit)
 
-    # resume: 기존 out 파일에 있는 qa_id는 건너뜀
+    # resume: 기존 out 파일에 있는 qa_id는 건너뜀 (단, 설정이 같을 때만)
     out_path = Path(args.out)
+    check_resume_config(out_path, args,
+                        len(ir_prep.by_key) // 2 if ir_prep is not None else None)
     done = set()
     if out_path.exists():
         done = set(pd.read_csv(out_path)["qa_id"].astype(str))

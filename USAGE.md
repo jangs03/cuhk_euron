@@ -237,6 +237,10 @@ python src/tune_yes_threshold.py --probs submission_v8.csv.probs.csv --apply sub
 **동작 특성:**
 - **Resume**: `--out` 파일에 이미 있는 qa_id는 건너뜀 → 중단돼도 같은 명령 재실행하면 이어서 돈다.
   처음부터 다시 하려면 out 파일을 삭제.
+- **설정 변경 감지**: 실행마다 `<out>.meta.json`에 설정을 기록하고, 같은 출력 파일에
+  **다른 설정으로 이어 쓰려 하면 무엇이 바뀌었는지 보여주고 중단**합니다.
+  (모델·TTA·해상도 등을 바꿨는데 EXP 태그를 안 바꾸면 옛 답이 재사용되어 실험이 조용히 무효가 되는 사고 방지.)
+  의도한 재개라면 `--allow-config-change`.
 - 클립 하나가 깨져도 죽지 않고 형식에 맞는 fallback 답을 쓰고 계속 진행 (마지막에 에러 수 출력).
 - 답은 카테고리 형식으로 자동 보정됨 (single→한 글자, multi→글자 집합, sequence→ABCD 순열).
 
