@@ -162,6 +162,13 @@ def main():
     df = data_utils.load_qa(args.qa)
     media_roots = [Path(r.strip()) for r in args.media_root.split(",") if r.strip()]
 
+    # 실제로 적용된 설정 — 플래그가 안 먹은 채 도는 사고를 눈으로 잡기 위해
+    print(f"[cfg] decoding={args.decoding} tta={args.tta} frames={args.frames}"
+          f"/seq{args.seq_frames} max_side={args.max_side} sampling={args.sampling}"
+          f" multi={args.multi_mode}"
+          f"{' nonvisual=' + args.nonvisual if args.nonvisual else ''}"
+          f"{' ir_preprocess=on' if args.ir_preprocess else ''}")
+
     # non-visual 설정: fused csv에 큐 컬럼이 있어야 함
     from prompts import NONVISUAL_COLUMNS, modalities_for, parse_nonvisual_spec
     nv_spec = parse_nonvisual_spec(args.nonvisual)
