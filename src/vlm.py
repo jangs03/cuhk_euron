@@ -238,6 +238,32 @@ class QwenVLM:
         return scores
 
     @torch.inference_mode()
+    def score_candidates(self, frames, prompt: str, candidates: list[str],
+                         times: list[float] | None = None,
+                         prefix: str = "ANSWER: ") -> dict[str, float]:
+        """후보 문자열들이 prefix 뒤에 올 로그확률(토큰 합)을 각각 계산.
+
+        sequence처럼 답이 '여러 글자의 순열'인 경우, 자유 생성 후 파싱하는 대신
+        가능한 답을 전부 채점해 최댓값을 고른다 → **파싱 실패가 원천적으로 없고
+        항상 유효한 순열이 나온다**. (모델이 지시 형식을 안 지켜도 안전)
+        """
+        base = self._build_inputs(frames, prompt, times, assistant_prefix=prefix)
+        n0 = int(base["input_ids"].shape[1])
+
+        scores = {}
+        for cand in candidates:
+            inp = self._build_inputs(frames, prompt, times,
+                                     assistant_prefix=prefix + cand)
+            ids = inp["input_ids"][0]
+            if ids.shape[0] <= n0:               # 토큰 경계가 어긋난 경우 방어
+                scores[cand] = float("-inf")
+                continue
+            logprobs = torch.log_softmax(self.model(**inp).logits[0].float(), dim=-1)
+            idx = torch.arange(n0, ids.shape[0], device=ids.device)
+            scores[cand] = float(logprobs[idx - 1, ids[idx]].sum())
+        return scores
+
+    @torch.inference_mode()
     def yes_probability(self, frames, prompt: str,
                         times: list[float] | None = None) -> float:
         """이진 질의의 P(YES) — YES/NO 두 스코어를 정규화한 상대 확률."""

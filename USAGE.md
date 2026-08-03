@@ -100,6 +100,7 @@ python src/run_baseline.py --qa data/test_qa.csv --out submission.csv \
 | `--category` | (없음) | 쉼표로 카테고리 필터 — 빠른 검증용. 예: `--category sequence` (45문항, ~1분) |
 | `--decoding` | `generate` | `logits`=자유 생성 대신 로그확률로 답 선택 (single류=글자 확률 비교, multi=P(YES)+threshold, sequence는 항상 generate). 보기별 확률이 `<out>.probs.csv`에 저장됨 |
 | `--yes-threshold` | 0.5 | logits 디코딩에서 multi의 P(YES) 채택 기준 |
+| `--seq-mode` | `score` | sequence 답 결정: `score`=가능한 순열 전부 로그확률 채점(**파싱 실패 없음**, 문항당 24회 forward), `generate`=자유 생성 후 파싱 |
 | `--tta K` | 1 | **보기 순서 순열 TTA** — 원본 포함 K회 추론 후 집계. 위치 편향을 구조적으로 상쇄 (single류=확률 평균, sequence=다수결, multi(binary)는 순서 무관이라 미적용). 추론 K배 |
 | `--quant` | `none` | `4bit`/`8bit` = bitsandbytes 양자화 (VRAM 절감용). 속도 목적이면 아래 AWQ 권장 |
 | `--nonvisual` | (없음) | 센서 큐 지정. 전역 `imu,skeleton` 또는 **카테고리별** `emotion=imu,skeleton;multi=imu`. **`--qa`를 fused csv로 지정해야 함** |
@@ -178,6 +179,27 @@ python src/run_baseline.py ... --ir-preprocess data/cache/ir_preprocess_manifest
 | manifest에 없는 클립 | 원본 사용 (부분 커버리지 허용) — 실행 후 적용률 출력 |
 
 필요 파일: `ir_preprocess_manifest.csv` (필수), `preprocess_config.json` (같은 폴더에 있으면 자동 사용)
+
+### 카테고리 라우팅 (`route_predictions.py`)
+
+모델마다 잘하는 카테고리가 다를 때, **카테고리별 승자의 답만 모아** 하나의 제출 파일로 합칩니다.
+이미 만든 예측 csv를 후처리로 합치므로 **추가 추론이 없습니다**(GPU 0분).
+
+```bash
+# 검증셋에서 이득 확인 (--gold를 주면 단독 vs 라우팅 비교표 출력)
+python src/route_predictions.py --out routed.csv --gold data/training_qa.csv \
+    --map "*=val_qwen3.csv;sequence=val_base.csv"
+
+# 이득이 있으면 같은 매핑을 테스트 예측에 적용
+python src/route_predictions.py --out submission_routed.csv --qa data/test_qa.csv \
+    --map "*=sub_qwen3.csv;sequence=sub_base.csv"
+```
+
+매핑에는 기본값 `*=<csv>`가 반드시 필요합니다. `compare_runs.py`가 검증 결과를 보고
+**이 명령을 그대로 만들어 출력**하므로 복사해 쓰면 됩니다.
+
+> ⚠️ 카테고리별 표본이 작아(27~99문항) 승자가 노이즈일 수 있습니다. 차이가 큰 카테고리만
+> 라우팅하는 보수적 버전과 함께 비교하세요.
 
 ### 보기 위치 편향 진단 (`check_option_bias.py`)
 

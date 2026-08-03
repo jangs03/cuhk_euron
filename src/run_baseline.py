@@ -11,6 +11,7 @@
 """
 import argparse
 import csv
+import itertools
 import json
 import math
 import random
@@ -134,6 +135,9 @@ def main():
                     help="보기 위치 편향 제거 (decoding=logits 전용). "
                          "예: 'A:0.31,B:0.24,C:0.23,D:0.22'. "
                          "src/check_option_bias.py 출력값을 그대로 붙여넣으면 됨")
+    ap.add_argument("--seq-mode", choices=["score", "generate"], default="score",
+                    help="sequence 답 결정: score=가능한 순열 전부 로그확률 채점(파싱 실패 없음), "
+                         "generate=자유 생성 후 파싱(구버전). score는 문항당 24회 forward")
     ap.add_argument("--tta", type=int, default=1, metavar="K",
                     help="보기 순서 순열 TTA — 원본 포함 K회 추론 후 집계 (1=끄기). "
                          "위치 편향을 구조적으로 상쇄. single류=확률 평균, "
@@ -324,6 +328,8 @@ def main():
                         times = [p * duration for p in pos]
 
                 use_logits = args.decoding == "logits" and category != "sequence"
+                seq_score = (category == "sequence" and args.decoding == "logits"
+                             and args.seq_mode == "score")
 
                 # non-visual 센서 큐 블록 (카테고리별로 다른 조합 가능)
                 nv_block = ""
@@ -381,6 +387,16 @@ def main():
                             [qa_id, category, L, f"{agg[L] / len(perms):.4f}"])
                     probs_f.flush()
                     ans = max(agg, key=agg.get)
+                elif seq_score:
+                    # sequence: 가능한 순열을 전부 채점해 최댓값 선택 (파싱 불필요)
+                    prompt = build_prompt(str(row["question"]), options, category,
+                                          duration, nv_block)
+                    cands = ["".join(p) for p in itertools.permutations(letters)]
+                    sc = model.score_candidates(frames, prompt, cands, times)
+                    for c, v in sorted(sc.items(), key=lambda kv: -kv[1])[:3]:
+                        probs_writer.writerow([qa_id, category, c, f"{v:.3f}"])
+                    probs_f.flush()
+                    ans = max(sc, key=sc.get)
                 elif category == "sequence" and args.tta > 1:
                     # sequence: 순열마다 생성 → 원본 글자로 되돌린 뒤 다수결
                     votes = []

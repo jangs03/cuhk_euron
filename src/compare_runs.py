@@ -93,6 +93,7 @@ def main():
         raise SystemExit("채점할 결과가 없습니다")
 
     cats = [c for c in CAT_ORDER if any(c in r.index for r in results.values())]
+    cat_n = gold["category"].value_counts().to_dict()   # 카테고리별 문항 수
     base_name = next(iter(results))
     base = results[base_name]
 
@@ -147,12 +148,31 @@ def main():
             break
         if mods:
             spec_parts.append(f"{c}={','.join(mods)}")
-    if spec_parts is not None:
-        spec = ";".join(spec_parts) if spec_parts else "(센서 큐 없음이 최적)"
-        print(f"\n카테고리 조건부 적용 명령:\n  --nonvisual \"{spec}\"")
-        print("  ※ 위 조합으로 전체 검증을 한 번 더 돌려 실제 이득을 확인하세요 "
-              f"(카테고리별 최고치 단순 합산 상한 {sum(oracle) / len(oracle):.4f}, "
-              "카테고리 크기가 달라 실제 전체 정확도와는 다릅니다)")
+    if spec_parts:
+        print(f"\n카테고리 조건부 센서 큐:\n  --nonvisual \"{';'.join(spec_parts)}\"")
+
+    # ── 최종 승자 요약 — 셀 12/13에 그대로 붙여 쓸 수 있게 출력 ──
+    best_name = max(counts, key=lambda n: counts[n][0])
+    best_acc = counts[best_name][0]
+    print(f"\n{'=' * 66}\n제출용 요약\n{'=' * 66}")
+    print(f"단독 최고: {best_name}  ({best_acc:.4f})")
+
+    # 카테고리 라우팅: 승자가 갈리는 카테고리만 매핑
+    routed = {c: n for c, n in winners.items() if n != best_name}
+    if routed:
+        est = sum(results[winners[c]][c] * cat_n[c] for c in cats) / sum(cat_n.values())
+        print(f"\n카테고리 라우팅 예상: {est:.4f}  (단독 최고 대비 {est - best_acc:+.4f})")
+        pairs = [f"*={Path(loaded[best_name][0]).name}"]
+        pairs += [f"{c}={Path(loaded[n][0]).name}" for c, n in routed.items()]
+        print("  라우팅으로 바뀌는 카테고리:")
+        for c, n in routed.items():
+            gain = results[n][c] - results[best_name].get(c, 0)
+            print(f"    {c:20s} → {n:24s} {results[n][c]:.3f} ({gain:+.3f}, {cat_n[c]}문항)")
+        print(f"\n  python src/route_predictions.py --out routed.csv \\\\")
+        print(f"      --gold <gold.csv> --map \"{';'.join(pairs)}\"")
+        print("  ※ 표본이 작은 카테고리(<50문항)의 승자는 노이즈일 수 있습니다.")
+    else:
+        print("모든 카테고리에서 같은 설정이 최고 — 라우팅 불필요")
 
 
 if __name__ == "__main__":
