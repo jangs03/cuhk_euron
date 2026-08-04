@@ -81,6 +81,21 @@ def main():
             raise SystemExit(f"파일 없음: {name} → {path}")
         runs[name] = load_run(path)
 
+    # 결합 범위는 모든 구성원이 답한 문항으로 한정한다.
+    # (qa csv 전체를 순회하면 예측 없는 문항이 임의값으로 채워져 점수가 무너진다)
+    common = set.intersection(*(set(s.index) for s, _ in runs.values()))
+    before = len(qa)
+    qa = qa[qa["qa_id"].isin(common)]
+    if qa.empty:
+        raise SystemExit("모든 구성원이 공통으로 답한 문항이 없습니다 — 파일을 확인하세요")
+    sizes = {n: len(s) for n, (s, _) in runs.items()}
+    if len(set(sizes.values())) > 1:
+        print("⚠️  구성원별 문항 수가 다릅니다:")
+        for n, s in sizes.items():
+            print(f"     {n:24s} {s:>5}문항")
+    if len(qa) < before:
+        print(f"결합 범위: {len(qa)}문항 (qa csv {before}문항 중 전원이 답한 것만)\n")
+
     gold = None
     if args.gold:
         gold = pd.read_csv(args.gold, dtype=str, keep_default_na=False)
@@ -150,7 +165,8 @@ def main():
     cats = [c for c in CAT_ORDER if c in set(qa["category"])]
 
     def score(series: pd.Series):
-        ids = [i for i in series.index if i in gold.index]
+        # 공통 문항으로만 채점 — 구성원과 앙상블을 같은 기준으로 비교
+        ids = [i for i in series.index if i in gold.index and i in common]
         ok = pd.DataFrame({
             "category": [gold.loc[i, "category"] for i in ids],
             "ok": [is_correct(series[i], gold.loc[i, "answer"],
