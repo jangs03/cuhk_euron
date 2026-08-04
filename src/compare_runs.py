@@ -69,6 +69,8 @@ def main():
         raise SystemExit("채점할 결과가 없습니다")
 
     sizes = {n: len(i) for n, (_, i) in loaded.items()}
+    common = set.intersection(*(i for _, i in loaded.values()))
+    all_ids = set.union(*(i for _, i in loaded.values()))
     if len(set(sizes.values())) > 1:
         biggest = max(sizes.values())
         print("⚠️  문항 수가 다릅니다 (중단된 실행이 있을 수 있음):")
@@ -76,12 +78,16 @@ def main():
             flag = "" if s == biggest else "  ← 미완료"
             print(f"     {n:28s} {s:>5}문항{flag}")
         if not args.all_rows:
-            common = set.intersection(*(i for _, i in loaded.values()))
             print(f"   → 공통 {len(common)}문항으로만 비교합니다 "
                   f"(전체로 보려면 --all-rows)\n")
             gold = gold[gold["qa_id"].isin(common)]
         else:
             print("   → --all-rows: 각자 전체로 채점 (직접 비교는 부정확할 수 있음)\n")
+            gold = gold[gold["qa_id"].isin(all_ids)]
+    else:
+        # gold는 전체 QA csv일 수 있으므로 실제 채점 대상으로 좁힌다
+        # (안 좁히면 카테고리별 문항 수·라우팅 가중치가 전부 어긋남)
+        gold = gold[gold["qa_id"].isin(all_ids)]
 
     results, counts = {}, {}
     for name, (path, _ids) in loaded.items():
