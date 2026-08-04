@@ -73,6 +73,16 @@ def main():
             raise SystemExit(f"파일 없음: {cat} → {path}")
         preds[cat] = load_pred(path)
 
+    # 출력 범위는 기본(*) 예측이 커버하는 문항으로 한정한다.
+    # (qa csv 전체를 순회하면 예측이 없는 문항까지 임의값으로 채워져 점수가 무너진다)
+    base_ids = set(preds["*"].index)
+    before = len(qa)
+    qa = qa[qa["qa_id"].isin(base_ids)]
+    if len(qa) < before:
+        print(f"채점 범위: {len(qa)}문항 (qa csv {before}문항 중 예측이 있는 것만)\n")
+    if qa.empty:
+        raise SystemExit("예측과 겹치는 문항이 없습니다 — --qa/--gold 파일을 확인하세요")
+
     # 카테고리별로 해당 파일의 답을 선택
     chosen, source, missing = [], [], 0
     for _, row in qa.iterrows():
