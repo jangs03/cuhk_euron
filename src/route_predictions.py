@@ -17,6 +17,7 @@
 """
 import argparse
 import sys
+from collections import Counter
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).parent))
@@ -73,42 +74,44 @@ def main():
             raise SystemExit(f"파일 없음: {cat} → {path}")
         preds[cat] = load_pred(path)
 
-    # 출력 범위는 기본(*) 예측이 커버하는 문항으로 한정한다.
-    # (qa csv 전체를 순회하면 예측이 없는 문항까지 임의값으로 채워져 점수가 무너진다)
-    base_ids = set(preds["*"].index)
+    # 출력 범위 = 매핑된 파일들이 커버하는 문항의 합집합.
+    # 각 모델을 담당 카테고리에만 돌린 '부분 예측'도 그대로 합칠 수 있다
+    # (전체 추론량이 682×모델수 → 682로 줄어든다).
+    covered = set().union(*(set(s.index) for s in preds.values()))
     before = len(qa)
-    qa = qa[qa["qa_id"].isin(base_ids)]
-    if len(qa) < before:
-        print(f"채점 범위: {len(qa)}문항 (qa csv {before}문항 중 예측이 있는 것만)\n")
+    qa = qa[qa["qa_id"].isin(covered)]
     if qa.empty:
         raise SystemExit("예측과 겹치는 문항이 없습니다 — --qa/--gold 파일을 확인하세요")
+    if len(qa) < before:
+        print(f"채점 범위: {len(qa)}문항 (qa csv {before}문항 중 예측이 있는 것만)\n")
 
     # 카테고리별로 해당 파일의 답을 선택
-    chosen, source, missing = [], [], 0
+    chosen, used, missing = [], Counter(), []
     for _, row in qa.iterrows():
         cat = str(row["category"]).strip()
-        key = cat if cat in preds else "*"
-        s = preds[key]
         qid = str(row["qa_id"])
-        if qid in s.index:
+        key = cat if (cat in preds and qid in preds[cat].index) else "*"
+        s = preds.get(key)
+        if s is not None and qid in s.index:
             chosen.append(s[qid])
-        else:                                  # 해당 파일에 없으면 기본 파일로
-            base = preds["*"]
-            chosen.append(base[qid] if qid in base.index else "A")
-            missing += 1
-        source.append(mapping[key])
+            used[mapping[key]] += 1
+        else:                                  # 어느 파일에도 없음
+            chosen.append("A")
+            missing.append(qid)
 
     out = pd.DataFrame({"qa_id": qa["qa_id"], "prediction": chosen})
     Path(args.out).parent.mkdir(parents=True, exist_ok=True)
     out.to_csv(args.out, index=False)
 
-    print(f"라우팅 매핑:")
-    for cat in list(mapping):
-        n = sum(1 for c in qa["category"] if str(c).strip() == cat) if cat != "*" else "-"
-        print(f"  {cat:20s} → {Path(mapping[cat]).name}"
-              + (f"  ({n}문항)" if cat != "*" else "  (나머지 전부)"))
-    print(f"\n→ {args.out}  ({len(out)}행"
-          + (f", 누락 {missing}건은 기본 파일 사용" if missing else "") + ")")
+    print("라우팅 매핑 (실제 사용된 문항 수):")
+    for cat, path in mapping.items():
+        label = "나머지 전부" if cat == "*" else cat
+        print(f"  {label:20s} → {Path(path).name:34s} {used[path]:>5}문항")
+    print(f"\n→ {args.out}  ({len(out)}행)")
+    if missing:
+        print(f"⚠️  예측이 없어 임의값(A)으로 채운 문항 {len(missing)}건: "
+              f"{missing[:5]}{' ...' if len(missing) > 5 else ''}")
+        print("   → 담당 모델의 --category 범위가 빠짐없이 덮는지 확인하세요")
 
     if not args.gold:
         return
